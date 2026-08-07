@@ -1586,7 +1586,9 @@ At task completion, report:
 
 Claude should not begin by building the complete application.
 
-The first coding milestone should include only:
+This section describes the initial implementation **phase** and its outer scope boundary. It is not a single unit of work. Section 48 defines the individual milestones. Per Decision 069, Section 48 governs how the work is divided and reviewed.
+
+The initial implementation phase should include only:
 
 * Project scaffolding
 * TypeScript strict configuration
@@ -1616,6 +1618,10 @@ Do not include in the first milestone:
 ---
 
 # 48. Recommended First Development Milestones
+
+Per Decision 069, this section defines the actual unit of work. Milestones 0, 1, and 2 proceed in order as separate, individually reviewable milestones and must not be combined into one task or one review.
+
+Milestone 1 is additionally blocked until the financial rounding policy is resolved. See Decision 070.
 
 ## Milestone 0: Repository Foundation
 

@@ -2598,6 +2598,185 @@ Adjust the template if repeated sections provide no value.
 
 ---
 
+# Decision 068: Document Authority Order
+
+**Status:** Accepted
+**Scope:** Documentation, Engineering process
+
+## Decision
+
+When two PFOS documents conflict, authority resolves in the following order, from highest to lowest:
+
+1. PFOS-00 Product Constitution
+2. Accepted decisions in PFOS-02 Product Decision Log
+3. PFOS-01 Product Vision & Version 1 PRD
+4. PFOS-ENG-00 Core Architecture & Project Setup
+5. Individual engine and subsystem specifications under `docs/engineering/`
+6. `CLAUDE.md`, for operational instructions only
+
+A more specific lower-authority document may refine implementation details left open by a higher-authority document.
+
+It may not contradict one.
+
+Where a lower-authority document appears to conflict with a higher-authority document, the conflict must be reported and resolved through the process in Section 4 rather than resolved silently in code.
+
+`CLAUDE.md` carries no product or architectural authority. It defines how a coding agent works. It does not define what PFOS is or how it calculates.
+
+## Why
+
+No existing document stated which document wins in a conflict.
+
+PFOS-00 Section 1 establishes the Constitution as the standard against which all decisions are evaluated, and PFOS-ENG-00 Section 39 states that engine specifications inherit architecture standards unless they explicitly state otherwise. The full ordering was never written down.
+
+These documents were drafted in parallel across different concerns and several are still marked Draft for Review. Without a stated order, a developer or AI coding agent resolving an apparent conflict would have to guess, and separate tasks could guess differently.
+
+## Alternatives Considered
+
+* Leave the order implicit and derive it from each document's stated purpose
+* Treat the most recently updated document as authoritative
+* Treat the most specific document as authoritative in all cases
+* Require every conflict to be escalated with no default ordering
+
+## Tradeoffs
+
+A strict ordering may occasionally rank a well-reasoned engine-level detail below a more general document that did not anticipate it.
+
+The correct response is to amend the higher-authority document, not to ignore the ordering.
+
+## Consequences
+
+Conflicts between documents have a defined resolution path.
+
+Engine specifications may continue to define implementation detail freely within the boundaries set above them.
+
+`CLAUDE.md` may be updated for workflow reasons without implying a product or architectural change.
+
+## Future Review Trigger
+
+Reconsider when PFOS adds document classes not covered by this ordering, such as UX specifications under `docs/ux/` or roadmap documents under `docs/roadmap/`. New classes should be inserted at their appropriate level rather than left unranked.
+
+---
+
+# Decision 069: Milestone Sequencing Is Defined by PFOS-ENG-00 Section 48
+
+**Status:** Accepted
+**Scope:** Engineering process, Roadmap
+
+## Decision
+
+PFOS-ENG-00 Section 47 and Section 48 describe different things.
+
+Section 47 describes the broader initial implementation phase and its outer scope boundary. It states what early work may touch and, more importantly, what it may not.
+
+Section 48 defines the actual incremental milestones.
+
+Section 48 governs the unit of work.
+
+Milestones 0, 1, and 2 proceed in order as separate, individually reviewable milestones:
+
+1. Milestone 0 — Repository Foundation
+2. Milestone 1 — Financial Primitives
+3. Milestone 2 — Rule Engine
+
+They must not be combined into a single task or a single review.
+
+## Why
+
+Section 47 lists project scaffolding, shared primitives, and Rule Engine resolution together under the phrase "the first coding milestone," while Section 48 splits the identical work across Milestones 0, 1, and 2.
+
+Read literally, Section 47 authorizes one change containing the toolchain, the Money value object, and rule resolution.
+
+That would conflict with Decision 065 and with the requirement in PFOS-01 Section 65 that each milestone have explicit acceptance criteria before the next major milestone begins.
+
+## Alternatives Considered
+
+* Treat Section 47 as authoritative and deliver scaffolding, primitives, and Rule Engine as one milestone
+* Rewrite Section 47 to remove the milestone language entirely
+* Renumber the milestones so the two sections align textually
+
+## Tradeoffs
+
+Three separate milestones require three review cycles before any rule can be resolved.
+
+## Consequences
+
+PFOS-ENG-00 Section 47 is clarified to refer to a phase rather than a milestone.
+
+No milestone content changes. Only the unit of work is clarified.
+
+## Future Review Trigger
+
+None, unless the milestone list in Section 48 is itself restructured.
+
+---
+
+# Decision 070: Financial Rounding Policy Is Unresolved and Blocks Milestone 1
+
+**Status:** Deferred
+**Scope:** Financial logic, Engineering
+
+## Decision
+
+PFOS has not yet chosen a single rounding method for monetary calculations.
+
+The rounding policy must be resolved and recorded as an accepted decision before Milestone 1 Financial Primitives begins.
+
+Milestone 0 Repository Foundation does not depend on it and may proceed.
+
+## Why
+
+Three sections currently describe rounding differently.
+
+PFOS-ENG-00 Section 12 specifies rounding down, followed by deterministic remainder distribution in priority order.
+
+PFOS-ENG-02 Section 15 specifies half-up rounding to the nearest cent for a single obligation, floor plus remainder distribution for pool splits, and states that the final implementation must define and test one consistent method.
+
+PFOS-ENG-02 Section 29 recommends a largest-remainder method with a documented tie-break order, while PFOS-ENG-00 Section 12 and PFOS-ENG-02 Section 28 describe distribution by stable destination order.
+
+These differences are observable in real results.
+
+A ten percent obligation on $1,000.05 produces a raw value of 10,000.5 cents. Rounding down yields $100.00. Half-up yields $100.01.
+
+Stable-order and largest-remainder distribution agree on an even three-way split, because every fractional remainder is equal. They can disagree on a percentage split.
+
+The Money value object owns percentage allocation under PFOS-ENG-00 Section 10.3. It cannot be implemented correctly while the method is undecided.
+
+## Alternatives Considered
+
+* Choose a method during Milestone 1 implementation and document it afterward
+* Implement multiple rounding strategies behind a configuration flag
+* Defer the decision until the Allocation Engine milestone
+
+The first would place a material financial decision inside an implementation task, contrary to PFOS-00 Principle 19 and to the requirement in `CLAUDE.md` that material ambiguities be reported before implementing assumptions.
+
+The second would create two divergent paths through financial logic, contrary to PFOS-ENG-00 Section 39.
+
+The third would leave Milestone 1 unable to deliver a complete Money primitive.
+
+## Tradeoffs
+
+Milestone 1 cannot begin until this is settled.
+
+## Consequences
+
+Milestone 0 may proceed immediately.
+
+The resolving decision must state, at minimum:
+
+* The rounding method for a single percentage obligation
+* The distribution method for percentage pool splits
+* The distribution method for even splits
+* The complete tie-break ordering
+* Whether one method applies uniformly to all monetary division
+
+PFOS-ENG-00 Section 12, PFOS-ENG-02 Section 15, and PFOS-ENG-02 Section 29 must be reconciled to the chosen method once it is accepted.
+
+## Future Review Trigger
+
+This decision is superseded as soon as the rounding policy is accepted.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
