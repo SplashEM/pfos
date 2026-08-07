@@ -1,0 +1,48 @@
+# PFOS line-ending normalization.
+#
+# Text files are stored with LF in the repository and checked out with LF on
+# every platform, so a file's bytes never depend on who cloned it.
+#
+# This matters beyond tidiness. PFOS asserts financial invariants exactly to
+# the cent and treats CSV and JSON backups as untrusted input (PFOS-00
+# Principles 19 and 22). Fixtures and backup files whose bytes shift by
+# platform would make byte-level comparison unreliable.
+
+# Default: anything git detects as text is stored and checked out as LF.
+* text=auto eol=lf
+
+# Explicit text types. `text=auto` relies on a binary-detection heuristic;
+# these remove the guesswork for formats the project actually uses.
+*.ts     text eol=lf
+*.tsx    text eol=lf
+*.js     text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.html   text eol=lf
+*.css    text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.svg    text eol=lf
+
+# Windows-only scripts must keep CRLF or they will not execute.
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+
+# Binary. Never convert, never diff as text.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.pdf    binary
+*.zip    binary
+
+# Generated, but deliberately still diffable: a lockfile diff is how a
+# dependency substitution becomes visible in review (PFOS-00 Principle 22).
+package-lock.json  linguist-generated=true
