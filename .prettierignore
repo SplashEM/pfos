@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+package-lock.json
+
+# PFOS specifications are authored documents with deliberate formatting.
+# Prettier must not reflow them.
+docs/
+CLAUDE.md
+README.md
