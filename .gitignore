@@ -1,0 +1,21 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.vscode/settings.json
+
+# Financial and backup files
+*.csv
+*.ofx
+*.qfx
+*.qif
+*.pdf
+backups/
+exports/
+financial-data/
