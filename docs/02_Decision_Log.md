@@ -4009,6 +4009,120 @@ Any incompatible persisted contract change requires a schema-version increment s
 
 ---
 
+# Decision 075: Zero Sequential Top Priorities Are Allowed With a Warning
+
+**Status:** Accepted
+**Related:** Decisions 006, 013, 053, 068, 071, 073, 074
+**Scope:** Financial logic, Architecture, Engineering, UX
+
+## Decision
+
+A resolved top-priority plan may contain zero entries under the `SEQUENTIAL` strategy.
+
+Zero entries is a valid resolution result, not a validation failure. The Rule Engine resolves the plan, emits a visible warning, and returns a complete `ResolvedRuleSet`.
+
+## Sequential
+
+A `ResolvedTopPriorityPlan` with `strategy: 'SEQUENTIAL'` and an empty `entries` array is valid.
+
+The Rule Engine must emit a warning stating that no top priorities are configured.
+
+The warning travels on the existing `DomainWarning` channel defined by PFOS-ENG-00 §21 and carried by `ResolvedRuleSet.warnings` under Decision 074. This decision introduces no new code registry.
+
+The warning must be visible, as PFOS-ENG-01 §21.2 requires of every warning.
+
+## Percentage split
+
+A `ResolvedTopPriorityPlan` with `strategy: 'PERCENTAGE_SPLIT'` and an empty `entries` array remains a hard validation error.
+
+An empty authored pool totals zero basis points, which fails the authored-pool rule established by Decision 071 and stated in PFOS-ENG-01 §13.3. It reports the existing Rule Engine code `RULE_POOL_NOT_EXACTLY_100_PERCENT` introduced by Decision 073.
+
+No new error code is required.
+
+## Superseded specification text
+
+PFOS-ENG-01 §13.1 lists among the conditions validation should prevent:
+
+> Zero top priorities when the plan requires them, unless allowed by onboarding.
+
+That bullet is superseded.
+
+The remaining three bullets in §13.1 — more than three top priorities in V1, duplicate priority positions, and inactive or archived buckets as active priorities — are unchanged.
+
+## No onboarding state in rule evaluation
+
+The Rule Engine does not receive, infer, or consult onboarding state.
+
+PFOS-ENG-01 §25 does not include onboarding state in the evaluation context, and §26 forbids resolution from depending on UI state. Zero top priorities resolves identically regardless of how the user arrived at that configuration.
+
+## Why
+
+Exactly one sentence in the corpus addressed zero top priorities, and it conditioned a hard error on two undefined terms.
+
+"When the plan requires them" is defined nowhere. No bucket type, rule category, or plan state is designated as requiring top priorities.
+
+"Unless allowed by onboarding" refers to a state the Rule Engine is never given. PFOS-ENG-01 §25 omits it from the evaluation context and §26 forbids depending on UI state. The clause was therefore not implementable deterministically.
+
+The surrounding specification already treats zero as permitted:
+
+- PFOS-ENG-01 §21.1 enumerates hard validation errors and lists both neighbouring top-priority failures, duplicate ranks and more than three, while omitting zero.
+- PFOS-ENG-02 §61 lists Allocation Engine validation errors and likewise omits it.
+- PFOS-ENG-02 §78 already specifies the runtime outcome as a property test: if no destination is eligible, all money remains unallocated.
+
+Higher-authority documents require the permissive reading.
+
+Decision 053 states that the app must clearly indicate optional setup gaps without blocking use. PRD §47 makes priority selection step 5 of onboarding and states that most nonessential setup steps should be skippable, while steps 7 and 8 are entering a paycheck and viewing an Allocation Preview. Treating zero as a hard error would prevent a user who skipped step 5 from reaching step 8.
+
+Decision 013 and PRD §16 both state that users may select approximately one to three top priorities. Constitution Principle 5 states that the final financial decision belongs to the user, and Principle 2 lists ranked priority funding as an opinionated default rather than a requirement.
+
+Under Decision 068 a lower-authority document may not contradict a higher one, and an apparent conflict must be resolved by explicit amendment rather than silently in code. This decision performs that amendment.
+
+## Alternatives Considered
+
+- Require at least one top priority, making zero a hard validation error
+- Allow zero during draft and preview but reject it at confirmation
+- Define an onboarding state and formalize the existing §13.1 exemption
+
+Requiring at least one top priority contradicts Decision 053 at a higher authority level by blocking use on an incomplete setup gap. It would break the onboarding sequence in PRD §47, and it would force reintroducing an onboarding exemption, which is the same undefined concept this decision removes.
+
+Allowing zero until confirmation cannot be owned by the Rule Engine. Decision 074 defines `ResolutionMode` as `PREVIEW`, `SIMULATION`, and `HISTORICAL_RECALCULATION`. Confirmation is an orchestration step under PFOS-ENG-02 §57 and is not visible at resolution time. The check would have to live in the orchestrator or the Allocation Engine, splitting one validation rule across two owners against Decision 006. It would also still block the user before their first confirmed allocation.
+
+Defining an onboarding state would add a field to the evaluation context solely to make one validation rule conditional, and would make rule resolution depend on where the user is in the interface. PFOS-ENG-01 §26 forbids that.
+
+## Tradeoffs
+
+A user who intended to configure top priorities but did not complete the step receives a warning rather than a block, and money flows past the top-priority stage to later stages.
+
+Warnings are easier to overlook than errors. PFOS-ENG-01 §21.2 requires warnings to be visible, and the presentation layer carries the responsibility for making this one noticeable.
+
+The two strategies now validate asymmetrically: an empty `SEQUENTIAL` plan is valid while an empty `PERCENTAGE_SPLIT` plan is a hard error. The asymmetry is not arbitrary. A percentage pool makes an arithmetic claim that must total exactly 10,000 basis points, and an empty pool cannot satisfy it. A sequential list makes no such claim. The asymmetry must nonetheless be tested and explained.
+
+## Consequences
+
+Blocker D from Decision 074 is closed.
+
+`ResolvedRuleSet` requires no change. `ResolvedTopPriorityPlan.entries` is already a plain readonly array in both variants, and Decision 074 anticipated this outcome by recording that the contract can represent an empty entry list under either final rule.
+
+Allocation Engine behavior requires no change. PFOS-ENG-02 §62 and §78 already define the runtime outcome, and the `TOP_PRIORITY` stage with zero entries allocates nothing and passes the pool to the following stage.
+
+No new error code is introduced. No new code registry is introduced.
+
+PFOS-ENG-01 §13.1 is amended as described above.
+
+PFOS-ENG-01 §21.2 gains a warning for an unconfigured top-priority list.
+
+PFOS-ENG-01 §43.3 gains two validation tests: an empty `SEQUENTIAL` plan resolves successfully and warns, and an empty `PERCENTAGE_SPLIT` pool is rejected as a hard error.
+
+Milestone 2 may implement top-priority validation. Blockers C and F remain open and continue to gate the work they name.
+
+## Future Review Trigger
+
+Reconsider if a rule type is introduced that genuinely requires at least one top priority in order to terminate or to produce a defined result, which would give "when the plan requires them" a concrete meaning for the first time.
+
+Reconsider the warning channel if Rule Engine warning codes are later moved into a typed engine-owned registry under the Decision 073 pattern, since this warning would then need a registered code.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
