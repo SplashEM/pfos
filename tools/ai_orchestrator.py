@@ -76,50 +76,38 @@ def run_codex_review(task):
     print("CODEX REVIEW")
     print("========================================")
 
-    review_prompt = f"""
-Review the current uncommitted changes in this repository.
-
-The developer was given this task:
+    review_instructions = f"""
+The implementation task was:
 
 --- TASK ---
 {task}
 --- END TASK ---
 
-Review ONLY the changes relevant to that task.
+Review the current uncommitted changes strictly against this task
+and the repository's existing specifications.
 
 Do not expand the scope.
 
-Do not request unrelated refactors or features.
+Only report a finding if it is:
+- a correctness defect
+- a violation of an explicit task requirement
+- a meaningful regression
+- a violation of an existing project specification
+- a missing test required to establish correctness
 
-Only mark CHANGES_REQUESTED if:
-1. an explicit task requirement is violated,
-2. there is a correctness defect,
-3. there is a meaningful regression,
-4. the implementation violates an existing project specification,
-5. required tests are missing or failing.
+Ignore purely optional improvements.
 
-Your first line MUST be exactly:
+Conclude clearly with either:
 
 STATUS: APPROVED
 
 or
 
 STATUS: CHANGES_REQUESTED
-
-Then write:
-
-REVIEW:
-<review>
-
-When requesting changes:
-- identify the exact defect
-- cite the relevant requirement when possible
-- request the minimum necessary correction
 """
 
     result = subprocess.run(
-        "codex exec -",
-        input=review_prompt,
+        ["codex", "review", "--uncommitted", review_instructions],
         capture_output=True,
         text=True,
         shell=True,
