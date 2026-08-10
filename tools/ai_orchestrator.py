@@ -1,20 +1,64 @@
 import subprocess
+import sys
 
 
 MAX_REVIEW_ROUNDS = 3
 
 
+CLAUDE_ALLOWED_TOOLS = (
+    "Read,Write,Edit,"
+    "Bash(git status:*),"
+    "Bash(git diff:*),"
+    "Bash(git diff --stat:*),"
+    "Bash(npm test:*),"
+    "Bash(npm run test:*),"
+    "Bash(npm run lint:*),"
+    "Bash(npx vitest:*)"
+)
+
+
+def run_command(command):
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        shell=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    return result
+
+
+def git_status_short():
+    result = run_command("git status --short")
+
+    if result.returncode != 0:
+        print("Could not read git status:")
+        print(result.stderr)
+        sys.exit(1)
+
+    return result.stdout.strip()
+
+
 def run_claude(prompt):
-    print("\n==============================")
+    print("\n========================================")
     print("CLAUDE")
-    print("==============================")
+    print("========================================")
+
+    command = (
+        f'claude -p --allowedTools '
+        f'"{CLAUDE_ALLOWED_TOOLS}"'
+    )
 
     result = subprocess.run(
-        "claude -p",
+        command,
         input=prompt,
         capture_output=True,
         text=True,
-        shell=True
+        shell=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
     if result.returncode != 0:
@@ -23,57 +67,38 @@ def run_claude(prompt):
         return None
 
     print(result.stdout)
+
     return result.stdout
 
 
-def run_codex(prompt):
-    print("\n==============================")
+def run_codex_review(task):
+    print("\n========================================")
     print("CODEX REVIEW")
-    print("==============================")
+    print("========================================")
 
-    result = subprocess.run(
-        "codex exec -",
-        input=prompt,
-        capture_output=True,
-        text=True,
-        shell=True
-    )
+    review_prompt = f"""
+Review the current uncommitted changes in this repository.
 
-    if result.returncode != 0:
-        print("Codex error:")
-        print(result.stderr)
-        return None
+The developer was given this task:
 
-    print(result.stdout)
-    return result.stdout
-
-
-def build_review_prompt(task, claude_response):
-    return f"""
-You are the independent code reviewer.
-
-The original task was:
-
---- ORIGINAL TASK ---
+--- TASK ---
 {task}
---- END ORIGINAL TASK ---
+--- END TASK ---
 
-Claude's current solution is:
+Review ONLY the changes relevant to that task.
 
---- CLAUDE RESPONSE ---
-{claude_response}
---- END CLAUDE RESPONSE ---
+Do not expand the scope.
 
-Review the solution carefully.
+Do not request unrelated refactors or features.
 
-Check:
-1. Does it satisfy every requirement?
-2. Are there correctness problems?
-3. Are important edge cases missing?
-4. Is the implementation reasonable?
-5. Does anything conflict with the stated project constraints?
+Only mark CHANGES_REQUESTED if:
+1. an explicit task requirement is violated,
+2. there is a correctness defect,
+3. there is a meaningful regression,
+4. the implementation violates an existing project specification,
+5. required tests are missing or failing.
 
-Your first line MUST be exactly one of these:
+Your first line MUST be exactly:
 
 STATUS: APPROVED
 
@@ -84,123 +109,211 @@ STATUS: CHANGES_REQUESTED
 Then write:
 
 REVIEW:
-<your review>
+<review>
 
-If changes are needed, clearly state what Claude must fix.
+When requesting changes:
+- identify the exact defect
+- cite the relevant requirement when possible
+- request the minimum necessary correction
+"""
+
+    result = subprocess.run(
+        "codex exec -",
+        input=review_prompt,
+        capture_output=True,
+        text=True,
+        shell=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    if result.returncode != 0:
+        print("Codex error:")
+        print(result.stderr)
+        return None
+
+    print(result.stdout)
+
+    return result.stdout
+
+
+def build_initial_claude_prompt(task):
+    return f"""
+You are the implementation agent working in the current repository.
+
+Complete ONLY the following task:
+
+--- TASK ---
+{task}
+--- END TASK ---
+
+Rules:
+
+- Read the relevant project specifications before editing.
+- Inspect the existing implementation before making changes.
+- Modify the repository directly.
+- Stay strictly within the requested scope.
+- Do not commit.
+- Do not push.
+- Do not change branches.
+- Do not reset or discard existing work.
+- Do not modify unrelated files.
+- Run the relevant tests using the tools available to you.
+- If a command is not allowed, report that accurately rather than claiming it ran.
+- Prefer the smallest correct implementation.
+
+When finished, report:
+1. files changed
+2. what was implemented
+3. tests run
+4. test results
+5. any unresolved issues
+
+Do not merely propose code. Make the changes in the repository.
 """
 
 
-def build_revision_prompt(task, previous_response, codex_review):
+def build_revision_prompt(task, review):
     return f"""
-You are revising your previous solution after an independent code review.
+You are fixing your implementation after an independent review.
 
 Original task:
 
---- ORIGINAL TASK ---
+--- TASK ---
 {task}
---- END ORIGINAL TASK ---
+--- END TASK ---
 
-Your previous solution:
-
---- PREVIOUS SOLUTION ---
-{previous_response}
---- END PREVIOUS SOLUTION ---
-
-Independent reviewer feedback:
+Reviewer findings:
 
 --- REVIEW ---
-{codex_review}
+{review}
 --- END REVIEW ---
 
-Revise your solution to address every valid reviewer concern.
+Inspect the CURRENT repository state.
 
-Do not ignore requested changes.
+Fix every valid reviewer finding that relates to the original task.
 
-Return the complete improved solution, not just a description of the changes.
+Rules:
+
+- Do not expand scope.
+- Do not undo correct existing work.
+- Do not commit.
+- Do not push.
+- Do not change branches.
+- Do not reset the working tree.
+- Modify the repository directly.
+- Run the relevant tests after fixing the issues.
+- If reviewer feedback is merely optional or outside the task, do not implement it.
+
+When finished, report:
+1. files changed
+2. fixes made
+3. tests run
+4. test results
+5. unresolved issues
 """
 
 
 def main():
-    task = """
-Create a Python function called divide_money.
+    print("\nPFOS AI ORCHESTRATOR")
+    print("========================================")
 
-Requirements:
-- Accept total_cents and number_of_people.
-- Both arguments must be integers.
-- Return the amount each person receives.
-- Money must never use floating-point arithmetic.
-- If the amount cannot divide evenly, the function must return a list
-  distributing every cent.
-- The returned list must sum exactly to total_cents.
-- number_of_people must be greater than zero.
+    status = git_status_short()
 
-IMPORTANT FIRST ATTEMPT INSTRUCTION:
-For your first solution, intentionally make ONE obvious mistake:
-use floating-point division.
-
-Do not mention that the mistake is intentional.
-Present the solution normally.
-"""
-
-    print("\nStarting automated Claude <-> Codex review loop.")
-
-    claude_response = run_claude(task)
-
-    if claude_response is None:
+    if status:
+        print("\nSTOPPED: working tree is not clean.")
+        print("\nCurrent changes:")
+        print(status)
+        print(
+            "\nCommit, stash, or remove these changes before "
+            "starting an automated task."
+        )
         return
+
+    print("✓ Working tree clean")
+
+    task = input("\nEnter task for Claude:\n> ").strip()
+
+    if not task:
+        print("No task provided.")
+        return
+
+    print("\nStarting Claude implementation...")
+
+    claude_prompt = build_initial_claude_prompt(task)
+
+    claude_result = run_claude(claude_prompt)
+
+    if claude_result is None:
+        return
+
+    status = git_status_short()
+
+    if not status:
+        print("\nSTOPPED: Claude made no repository changes.")
+        return
+
+    print("\nRepository changes detected:")
+    print(status)
 
     for round_number in range(1, MAX_REVIEW_ROUNDS + 1):
 
-        print(f"\n******** REVIEW ROUND {round_number} ********")
-
-        review_prompt = build_review_prompt(
-            task,
-            claude_response
+        print(
+            f"\n******** REVIEW ROUND "
+            f"{round_number} ********"
         )
 
-        codex_review = run_codex(review_prompt)
+        review = run_codex_review(task)
 
-        if codex_review is None:
+        if review is None:
             return
 
-        if "STATUS: APPROVED" in codex_review:
-            print("\n==============================")
-            print("APPROVED")
-            print("==============================")
+        if "STATUS: APPROVED" in review:
+            print("\n========================================")
+            print("READY FOR HUMAN REVIEW")
+            print("========================================")
             print(
-                f"Codex approved Claude's solution "
-                f"after {round_number} review round(s)."
+                f"Codex approved the implementation after "
+                f"{round_number} review round(s)."
             )
+
+            print("\nFinal git status:")
+            print(git_status_short())
+
+            print(
+                "\nNothing was committed or pushed."
+            )
+
             return
 
-        if "STATUS: CHANGES_REQUESTED" not in codex_review:
-            print("\nERROR:")
+        if "STATUS: CHANGES_REQUESTED" not in review:
             print(
-                "Codex did not return a recognized review status."
+                "\nSTOPPED: Codex returned an unknown review status."
             )
             return
 
         if round_number == MAX_REVIEW_ROUNDS:
-            print("\n==============================")
+            print("\n========================================")
             print("STOPPED")
-            print("==============================")
+            print("========================================")
             print(
                 "Maximum review rounds reached without approval."
             )
             return
 
-        print("\nChanges requested.")
-        print("Sending Codex feedback back to Claude automatically...")
+        print(
+            "\nCodex requested changes. "
+            "Sending review back to Claude..."
+        )
 
         revision_prompt = build_revision_prompt(
             task,
-            claude_response,
-            codex_review
+            review,
         )
 
-        claude_response = run_claude(revision_prompt)
+        claude_result = run_claude(revision_prompt)
 
-        if claude_response is None:
+        if claude_result is None:
             return
 
 
