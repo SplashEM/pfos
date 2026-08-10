@@ -408,15 +408,23 @@ Example:
 100% = 10,000 basis points
 ```
 
-Conceptual calculation:
+A single percentage obligation is calculated as the complementary two-way weighted split, per Decision 071:
 
 ```text
-Raw Numerator = Eligible Cents × Basis Points
-Base Allocation = floor(Raw Numerator / 10,000)
-Remainder Fraction = Raw Numerator mod 10,000
+allocateByWeights(eligibleAmount, [rate, 10,000 − rate])
 ```
 
-For a single percentage obligation, the configured rounding policy applies.
+The obligation receives the first result. This produces nearest-cent rounding, and an exact half goes to the obligation because it occupies index 0.
+
+Example:
+
+```text
+10% of $1,000.05 allocates $100.01.
+```
+
+The complement is an arithmetic device only. It must never be emitted as an allocation line. The engine emits one line equal to the obligation amount and decrements the pool by exactly that amount. Emitting the complement would double-count the residual pool and break the core invariant in Section 2.
+
+Separately authored global obligations are independent complementary two-way splits, each evaluated against its own configured income basis. They are never combined into a single split across several rates.
 
 For percentage splits across several destinations, use the deterministic pool-allocation algorithm described later.
 
@@ -424,19 +432,16 @@ For percentage splits across several destinations, use the deterministic pool-al
 
 # 15. Rounding Policy
 
-Every percentage calculation must have an explicit rounding policy.
+One rounding method applies uniformly to all monetary division. It is defined by Decision 071 and specified in PFOS-ENG-00 Section 12.
 
-Recommended default for a single obligation:
+1. Assign each destination the floor of its raw proportional share, where the denominator is the sum of the supplied weights.
+2. Calculate the remaining cents.
+3. Distribute the remaining cents one at a time, largest fractional remainder first.
+4. Break ties by lowest index in caller-supplied canonical order.
 
-> Round to nearest cent using deterministic half-up rules.
+Single obligations, authored percentage pools, even splits, and post-capacity redistribution are all cases of this one method. There is no separate rounding strategy for any of them.
 
-However, pool splits should use:
-
-1. Calculate exact fractional shares.
-2. Allocate base whole cents.
-3. Distribute leftover cents using deterministic ordering.
-
-The final Engineering implementation must define and test one consistent method.
+Every Plan Snapshot records the rounding policy identifier used to produce it. The initial value is `PFOS-ROUND-071-V1`.
 
 No calculation may rely on JavaScript floating-point dollars.
 
@@ -508,17 +513,23 @@ Bucket caps and requirements still apply.
 
 If a percentage destination cannot accept its full share because it reaches a cap or target, the rule set must specify what happens to the excess.
 
-Recommended default:
+Required behavior, per Decision 072:
 
-1. Allocate up to destination capacity.
-2. Return excess to the active priority pool.
-3. Redistribute among remaining eligible destinations using their relative percentages.
-4. Repeat until:
+1. Exclude destinations that are ineligible for reasons other than capacity before the first round.
+2. Split the pool remaining for this stage across the currently eligible destinations using their weights.
+3. Fix any destination whose share exceeds its capacity at its capacity, and remove it from eligibility.
+4. Recompute the remaining pool against the surviving weights.
+5. Repeat until:
 
    * Pool is exhausted, or
-   * No eligible destination can accept more.
+   * No eligible destination can accept more, or
+   * No surviving destination carries a positive weight.
 
-The algorithm must terminate.
+The split is recomputed on each round. Previously calculated results are never patched incrementally. Each round performs exactly one rounding operation, so no rounding error accumulates across rounds.
+
+If no surviving destination carries a positive weight, the engine stops, leaves the balance unallocated, and emits the appropriate warning and explanation. It does not invoke monetary division with a zero total weight.
+
+The algorithm terminates because each round either removes at least one destination or exhausts the pool.
 
 ---
 
@@ -724,12 +735,16 @@ Restaurants: $100
 
 # 28. Even-Split Algorithm
 
+An even split is the weighted split of Section 29 with a weight of 1 for every eligible destination. It is not a separate algorithm.
+
 For `N` eligible destinations:
 
-1. Divide total cents by `N`.
-2. Give each destination the base integer amount.
+1. Supply a weight of 1 for each destination, giving a denominator of `N`.
+2. Give each destination the floor of its raw share.
 3. Determine leftover cents.
-4. Distribute extra cents by stable destination order.
+4. Distribute extra cents largest fractional remainder first, breaking ties by canonical order.
+
+Every fractional remainder is equal in an even split, so the tie-break decides and the result is distribution by stable destination order.
 
 Example:
 
@@ -752,27 +767,28 @@ Stable order must be explicit.
 
 ---
 
-# 29. Percentage-Split Algorithm
+# 29. Weighted-Split Algorithm
 
-For a percentage pool:
+All pool division uses the weighted primitive defined in PFOS-ENG-00 Section 12. The denominator is the sum of the supplied weights.
 
-1. Confirm percentages total exactly 10,000 basis points.
-2. Calculate each exact proportional numerator.
-3. Assign base whole cents.
-4. Track fractional remainders.
-5. Calculate undistributed cents.
-6. Distribute remaining cents deterministically.
+For a pool:
 
-Recommended remainder order:
+1. Determine the eligible destinations and their weights.
+2. Sort the destinations into canonical order.
+3. Calculate each exact proportional numerator.
+4. Assign base whole cents.
+5. Track fractional remainders.
+6. Calculate undistributed cents.
+7. Distribute remaining cents largest fractional remainder first, breaking ties by lowest index in canonical order.
 
-1. Largest fractional remainder
-2. Higher financial priority
-3. Lower stable order number
-4. Stable bucket ID
+The Allocation Engine does not validate that the weights total 10,000 basis points. Authored percentage pools are validated by the Rule Engine, per Decision 071. Weights derived during calculation legitimately total less than 10,000 once a destination has been removed under Section 18 or Section 34, and requiring 10,000 here would make redistribution impossible to express.
 
-This method is similar to the largest remainder method.
+Responsibility for the remainder order is split between layers:
 
-The chosen method must be documented in code and tests.
+* Largest fractional remainder is applied by the monetary division primitive.
+* Canonical order is supplied by the Allocation Engine, as defined in Section 68.
+
+This is the largest remainder method. It is documented in code and tests.
 
 ---
 
@@ -856,16 +872,16 @@ Example:
 30% Emergency Fund
 ```
 
-If Emergency Fund reaches its target during distribution:
+If Emergency Fund reaches its target during distribution, the round-based behavior of Section 18 applies:
 
-1. Allocate only its remaining capacity.
-2. Return excess to the leftover pool.
-3. Redistribute according to the policy’s defined fallback.
+1. Fix Emergency Fund at its remaining capacity.
+2. Remove it from eligibility.
+3. Recompute the remaining leftover pool against the surviving weights.
 
-Recommended default:
+Required default:
 
-* Redistribute among remaining eligible percentage destinations proportionally.
-* If no eligible destinations remain, leave the rest unallocated.
+* Recompute across the remaining eligible percentage destinations using their weights.
+* If no eligible destination remains, or no surviving destination carries a positive weight, leave the rest unallocated and explain why.
 
 ---
 
@@ -1099,6 +1115,7 @@ This may happen because:
 * Leftover policy is “Leave unallocated”
 * No eligible destination exists
 * All finite-capacity destinations are full
+* No surviving destination in a weighted pool carries a positive weight
 * The user intentionally retained a cash buffer
 * A rule was skipped
 * A policy failed safely and returned funds to unallocated
@@ -1150,7 +1167,7 @@ interface AllocationInvariantReport {
   readonly noDuplicateAllocationLineEffects: boolean;
   readonly allDestinationsValid: boolean;
   readonly finiteCapacitiesRespected: boolean;
-  readonly percentagePoolsBalanced: boolean;
+  readonly weightedPoolsDistributeExactly: boolean;
 }
 ```
 
@@ -1369,7 +1386,7 @@ A confirmed allocation must reference the Plan Snapshot containing:
 * Goal funding constraints
 * Event overrides
 * Allocation stage configuration
-* Rounding policy
+* Rounding policy identifier, initially `PFOS-ROUND-071-V1`
 * Evaluation date
 * Source rule versions
 
@@ -1454,6 +1471,9 @@ Examples:
 
 * Negative income
 * Unsafe monetary integer
+* Negative total supplied to monetary division
+* Zero total weight supplied to monetary division
+* Weighted product exceeding the safe integer range
 * Missing resolved rules
 * Missing destination bucket
 * Invalid bucket capacity
@@ -1479,6 +1499,7 @@ Warnings may include:
 * A recurring bill remains underfunded
 * A goal is only partially funded
 * All leftover destinations are full
+* No surviving destination in a weighted pool carries a positive weight
 * A manual override reduces a protected requirement
 * A large amount remains unallocated
 * A configured bucket is skipped because it is funded
@@ -1500,6 +1521,7 @@ AllocationInvariantError
 MissingBucketStateError
 InvalidCapacityError
 InvalidPercentagePoolError
+InvalidDivisionInputError
 UnsupportedAllocationStrategyError
 NonTerminatingAllocationError
 InvalidOverrideError
@@ -1596,6 +1618,14 @@ Examples:
 * Percentage remainder distribution
 * Eligible leftover destinations
 * Equal fractional remainder tie-breakers
+
+Canonical order is:
+
+1. Priority rank ascending, with destinations having no rank placed last
+2. Stable order ascending
+3. Bucket ID lexicographic
+
+The Allocation Engine sorts destinations into canonical order before supplying weights to monetary division. The division primitive does not sort. Its tie-break is positional, so canonical order fully determines which destination receives a residual cent when fractional remainders are equal.
 
 Never depend on:
 
@@ -1865,6 +1895,9 @@ Required unit-test categories:
 * Rate of 0%
 * Rate of 100%
 * Rounding at half-cent boundaries
+* Exact-half tie direction, where 10% of $1,000.05 allocates $100.01
+* Complement is never emitted as an allocation line
+* Multiple global obligations resolved as independent two-way splits
 * Destination capacity lower than obligation
 
 ## Sequential Priorities
@@ -1906,6 +1939,15 @@ Required unit-test categories:
 * Replace leftover policy
 * Invalid archived bucket
 
+## Weighted Division
+
+* Denominators other than 10,000, produced by capacity removal
+* Multiple sequential capped destinations across several rounds
+* All surviving weights zero, leaving the balance unallocated without invoking division
+* A zero-weight member of an otherwise valid authored pool
+* Negative total rejected with a typed error
+* Safe integer boundary for the product of total and summed weights
+
 ---
 
 # 77. Invariant Tests
@@ -1921,6 +1963,7 @@ Additional invariants:
 * No allocation line is negative.
 * No finite capacity is exceeded.
 * Total components equal aggregate destination totals.
+* Weighted pools distribute their pool exactly.
 * Percentage pools do not allocate more than their pool.
 * Same cent is not allocated twice.
 * Skipped buckets receive no automatic amount.
@@ -1945,6 +1988,8 @@ Generate broad input ranges and verify:
 * If all destinations are unlimited, all non-buffer leftover money is allocated.
 * If no destination is eligible, all money remains unallocated.
 * Redistributed capped percentage pools preserve total money.
+* Every destination's share stays within one cent of its exact proportional value, so the deviation introduced by renormalizing weights cannot occur.
+* Redistribution rounds each produce a result independent of the number of prior rounds.
 
 ---
 

@@ -2712,7 +2712,8 @@ None, unless the milestone list in Section 48 is itself restructured.
 
 # Decision 070: Financial Rounding Policy Is Unresolved and Blocks Milestone 1
 
-**Status:** Deferred
+**Status:** Superseded
+**Superseded By:** Decision 071
 **Scope:** Financial logic, Engineering
 
 ## Decision
@@ -2773,7 +2774,228 @@ PFOS-ENG-00 Section 12, PFOS-ENG-02 Section 15, and PFOS-ENG-02 Section 29 must 
 
 ## Future Review Trigger
 
-This decision is superseded as soon as the rounding policy is accepted.
+Superseded by Decision 071, which resolves all five requirements listed above and lifts the Milestone 1 block.
+
+---
+
+# Decision 071: Unified Weighted Monetary Division
+
+**Status:** Accepted
+**Supersedes:** Decision 070
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+All monetary division in PFOS uses one primitive.
+
+```text
+Money.allocateByWeights(total, weights)
+```
+
+The denominator is the sum of the supplied weights.
+
+### Algorithm
+
+1. Base share for each destination is `floor(total × wᵢ / Σw)`.
+2. Residual `r = total − Σ base shares`.
+3. Distribute `r` one cent at a time, largest fractional remainder first.
+4. Break ties by lowest index in caller-supplied order.
+
+The residual always satisfies `0 ≤ r < number of weights`. Exactly `r` destinations receive one additional cent, and no destination ever requires two.
+
+The sum of the returned amounts equals the supplied total exactly.
+
+### Single percentage obligation
+
+A single percentage obligation is computed as the complementary two-way split:
+
+```text
+[rate, 10,000 − rate]
+```
+
+For two complementary weights the fractional parts sum to zero or one, so at most one cent is ever in play. Largest-remainder distribution therefore produces nearest-cent rounding, and an exact half goes to the obligation because the obligation occupies index 0.
+
+Example:
+
+```text
+10% of $1,000.05 allocates $100.01.
+```
+
+The complement is an arithmetic device. It must never be emitted as an allocation line. The engine emits one line equal to the obligation amount and decrements the pool by exactly that amount.
+
+### Multiple global obligations
+
+Separately authored global rules are independent complementary two-way splits, each evaluated against its own configured income basis.
+
+They are never combined into a single N-way split.
+
+Each rule remains independently authored, versioned, traceable, and explainable.
+
+### Even splits
+
+Even splits use a weight of 1 for every eligible destination.
+
+### Percentage pools
+
+Authored percentage pools use basis points, where `Σw = 10,000`.
+
+### Validation ownership
+
+The Rule Engine validates authored configuration:
+
+* An authored percentage pool totals exactly 10,000 basis points.
+* An individual pool entry is between 0 and 10,000 basis points.
+* A single rate is between 0 and 10,000 basis points and carries no sum requirement.
+
+Money validates arithmetic preconditions only:
+
+* Weights are non-empty.
+* Every weight is a non-negative safe integer.
+* The sum of the weights is at least 1.
+* The total is non-negative.
+* The product of the total in cents and the sum of the weights remains within the safe integer range.
+
+Money never checks for 10,000.
+
+### Negative totals
+
+`allocateByWeights` rejects a negative total with a typed domain error.
+
+Proportional reversals, including refunds under Decision 037, divide the absolute positive amount using the normal algorithm and then apply the negative sign to the resulting reversal records.
+
+Ordinary Money addition, subtraction, and comparison remain signed.
+
+### Primitive isolation
+
+Money is unaware of buckets, bucket identifiers, priority ranks, stable order, capacities, eligibility, statuses, rules, rule versions, allocation stages, and every Allocation Engine type.
+
+Money does not sort. The caller supplies canonical order, and the tie-break is positional.
+
+### Rounding policy identity
+
+Every Plan Snapshot records the rounding policy identifier used to produce it.
+
+The initial value is:
+
+```text
+PFOS-ROUND-071-V1
+```
+
+## Why
+
+Decision 070 required the resolving decision to state five things. This decision states all five:
+
+1. **Rounding method for a single percentage obligation.** The complementary two-way split, which yields nearest-cent rounding with exact halves going to the obligation.
+2. **Distribution method for percentage pool splits.** Largest fractional remainder over the supplied weights.
+3. **Distribution method for even splits.** The same primitive with every weight equal to 1.
+4. **Complete tie-break ordering.** Equal fractional remainder resolves to the lowest index in caller-supplied order. The Allocation Engine supplies canonical order as priority rank ascending with absent ranks last, then stable order ascending, then bucket identifier.
+5. **Whether one method applies uniformly.** Yes. The single obligation, the even split, and the authored percentage pool are special cases of one weighted split.
+
+A weighted primitive is required rather than optional. When a destination reaches its capacity and is removed, the surviving weights sum to less than 10,000 by definition. Any primitive that requires its inputs to total exactly 10,000 must renormalize the surviving weights, and renormalization is not exact in integers.
+
+A 60/30/10 pool whose 10% destination is capped leaves true proportions of two-thirds and one-third. In basis points that is 6,666.67, which is not representable. Rounding the weights instead of the money shifts the split: on a $10,000 pool, renormalized weights of 6,667 and 3,333 produce 666,700 and 333,300 cents against an exact split of 666,667 and 333,333. The 33-cent deviation still conserves the total, so conservation tests pass and the error is silent.
+
+Weighted division also serves Decision 037, where partial refunds restore the original proportions. Those weights are original cent amounts, which never total 10,000.
+
+## Alternatives Considered
+
+* Require every percentage split passed to Money to total exactly 10,000 basis points
+* Use half-up rounding for single obligations and largest-remainder distribution for pools as two separate documented methods
+* Distribute residual cents by stable destination order rather than by largest fractional remainder
+* Choose a method during Milestone 1 implementation and document it afterward
+
+The first is rejected for the reasons above. It cannot preserve exact relative proportions after capacity removal, and it introduces a second hidden rounding layer with its own tie-break rule when rounded weights fail to total 10,000.
+
+The second would answer Decision 070's fifth question in the negative and would leave two rounding paths through financial logic, contrary to PFOS-ENG-00 Section 39.
+
+The third gives residual cents to whichever destination sorts first regardless of entitlement, which is harder to explain under PFOS-00 Principle 9. It also conflicts with the largest-remainder recommendation already present in PFOS-ENG-02 Section 29.
+
+The fourth was already rejected by Decision 070.
+
+## Tradeoffs
+
+Largest-remainder distribution requires tracking fractional remainders rather than simply walking a stable order, which is slightly more work to implement and test.
+
+Adopting it amends PFOS-ENG-00 Section 12, a higher-authority document than the engine specification that recommended it. Under Decision 068 that amendment must be explicit rather than resolved silently in code, which this decision performs.
+
+## Consequences
+
+Milestone 1 is unblocked.
+
+Milestone boundaries are preserved:
+
+* Milestone 1 implements the Money primitive and its tests only.
+* Milestone 2 implements Rule Engine authored-configuration validation.
+
+PFOS-ENG-00 Sections 10.2, 10.3, 11, 12, and 44 are amended.
+
+PFOS-ENG-01 Sections 13.3, 14.3, 15.1, 16.4, 21.1, 43.3, and 43.6 are amended.
+
+PFOS-ENG-02 Sections 14, 15, 28, 29, 47, 56, 61, 63, 68, 76, 77, and 78 are amended.
+
+The negate-after-split pattern for proportional reversals must be recorded in the Transaction Engine specification when that document is written.
+
+## Future Review Trigger
+
+Reconsider if PFOS adds a currency whose minor unit is not the cent, or if a monetary division case appears that cannot be expressed as a weighted split. A change to the algorithm requires a new rounding policy identifier so that existing Plan Snapshots continue to reproduce their original results.
+
+---
+
+# Decision 072: Capacity-Constrained Redistribution Recomputes the Split
+
+**Status:** Accepted
+**Related:** Decision 071
+**Scope:** Financial logic, Architecture
+
+## Decision
+
+When a destination's proportional share exceeds its allocation capacity, the Allocation Engine fixes that destination at its capacity, removes it from eligibility, and recomputes the remaining pool against the surviving weights using `allocateByWeights`.
+
+Previously calculated results are never patched incrementally.
+
+Rules:
+
+* Destinations that are ineligible for reasons other than capacity are excluded before the first round.
+* Capacity removal occurs within rounds.
+* If no surviving destination carries a positive weight, the engine stops, leaves the balance unallocated, and emits the appropriate warning and explanation. It does not call Money.
+* Each round removes at least one destination or exhausts the pool, satisfying the termination requirement in PFOS-ENG-02 Section 66.
+
+This behavior is owned by the Allocation Engine. Money is not involved in eligibility or capacity.
+
+## Why
+
+Both round-based recomputation and iterative excess redistribution produce identical results in exact rational arithmetic. They differ in rounding behavior.
+
+Round-based recomputation performs exactly one rounding operation per round. Iterative excess redistribution rounds once per iteration and accumulates error across iterations.
+
+One split per round also produces one explanation per round, which is simpler to present under PFOS-00 Principle 9.
+
+## Alternatives Considered
+
+* Iterative excess redistribution, as described in the original PFOS-ENG-02 Sections 18 and 34
+* Proportional scaling of already-calculated results after a destination is capped
+
+The first accumulates rounding error across iterations.
+
+The second patches previously calculated results, which obscures the relationship between a destination's weight and its final amount and makes the allocation harder to explain.
+
+## Tradeoffs
+
+Recomputing the full remaining split on each round performs slightly more arithmetic than adjusting existing results. This is immaterial at the scale described in PFOS-ENG-02 Section 65.
+
+## Consequences
+
+PFOS-ENG-02 Sections 18, 34, 45, and 62 are amended.
+
+Worked examples in PFOS-ENG-02 Sections 72 and 73 are unchanged. Both reproduce exactly under this behavior.
+
+This decision targets Milestone 3 and does not authorize work outside it.
+
+It may be reconsidered independently of Decision 071.
+
+## Future Review Trigger
+
+Reconsider if a rule type introduces a capacity that can increase during an allocation run, which would break the guarantee that each round strictly reduces the eligible destination count.
 
 ---
 

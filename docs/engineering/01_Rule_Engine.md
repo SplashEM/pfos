@@ -553,12 +553,15 @@ PERCENTAGE_SPLIT
 
 The user assigns percentages across top priorities.
 
-Validation:
+Validation of this authored percentage pool:
 
 * Percentages must be nonnegative.
-* Total must equal 100%.
+* Total must equal exactly 10,000 basis points.
 * Inactive buckets cannot receive a percentage.
-* Rounding leftovers follow deterministic priority order.
+
+This requirement applies to the authored pool only. It does not apply to weights derived during allocation, which legitimately total less once a destination is removed by capacity.
+
+Rounding leftovers follow the method defined by Decision 071.
 
 ## 13.4 Future Strategy
 
@@ -585,7 +588,9 @@ Users may define:
 
 ## 14.3 Validation
 
-A lower-priority percentage split must total 100% within its allocation pool.
+An authored lower-priority percentage split must total exactly 10,000 basis points within its allocation pool.
+
+This requirement applies to the authored pool only, not to weights derived during allocation.
 
 The Rule Engine must distinguish:
 
@@ -609,6 +614,14 @@ Fields:
 * Applicable income sources
 * Period
 * Maximum, if any
+
+Validation:
+
+* The rate must be between 0 and 10,000 basis points.
+
+A single rate is a complete and valid configuration on its own. It carries no requirement to total 10,000 basis points with any other rule. A rate of 1,000 basis points, representing 10%, is valid by itself.
+
+The sum-to-10,000 requirement applies only to authored percentage pools, described in Sections 13.3, 14.3, and 16.4.
 
 Example:
 
@@ -747,12 +760,14 @@ Example:
 30% Emergency Fund
 ```
 
-Validation:
+Validation of this authored percentage pool:
 
-* Percentages total 100%.
+* Percentages total exactly 10,000 basis points.
 * Destination buckets are active and eligible.
 * Funded goals that pause allocations are skipped unless explicitly allowed.
 * Any skipped destination must be explained.
+
+This requirement applies to the authored pool only, not to weights derived during allocation.
 
 ## 16.5 Highest-Priority Unfinished Goal
 
@@ -901,7 +916,9 @@ The Rule Engine validates configurations before activation.
 
 Examples:
 
-* Percentages total more than 100% in the same pool.
+* Percentages total more than 10,000 basis points in the same pool.
+* An authored percentage pool does not total exactly 10,000 basis points.
+* A single rate falls outside the range 0 to 10,000 basis points.
 * Required destination bucket does not exist.
 * Destination bucket is archived.
 * A group is selected as an allocation destination.
@@ -1523,8 +1540,9 @@ Resolved result: Reset
 
 Include:
 
-* Percentages totaling 99.99%
-* Percentages totaling 100.01%
+* An authored pool totaling 99.99%, which must be a hard error
+* An authored pool totaling 100.01%, which must be a hard error
+* A single rate of 10%, which must be valid on its own
 * Missing bucket
 * Archived bucket
 * Circular redirects
@@ -1559,7 +1577,9 @@ Confirm:
 
 Useful invariants:
 
+* Authored percentage pools total exactly 10,000 basis points.
 * Resolved percentage pools never exceed 100%.
+* A single rate is accepted at any value from 0 to 10,000 basis points.
 * Rule resolution always terminates.
 * No active destination is duplicated unintentionally.
 * Lower-precedence replacement rules never override higher-precedence rules.

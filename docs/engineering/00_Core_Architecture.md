@@ -583,6 +583,12 @@ All money values must remain within JavaScript's safe integer range.
 
 Validation must reject unsafe values.
 
+Weighted division carries an additional constraint. The product of the total in cents and the sum of the supplied weights must remain within the safe integer range. Validation must reject inputs that would exceed it.
+
+Weighted division requires a non-negative total. A negative total must be rejected with a typed domain error. Callers dividing a reversal divide the absolute positive amount and apply the negative sign to the resulting records.
+
+Ordinary addition, subtraction, and comparison remain signed.
+
 ## 10.3 Operations
 
 Money utilities should include:
@@ -593,9 +599,13 @@ Money utilities should include:
 * Minimum
 * Maximum
 * Sum
-* Allocate by percentages
+* Allocate by integer weights
 * Format for display
 * Parse user input safely
+
+Allocation by integer weights is the single monetary division primitive. Its denominator is the sum of the supplied weights. Percentage allocation is the special case where the weights are basis points summing to 10,000. See Decision 071 and Section 12.
+
+The primitive accepts a total and an ordered array of integer weights. It must not accept or reference buckets, priority ranks, capacities, eligibility, rules, or any engine-specific type. It does not sort. The caller supplies canonical order.
 
 ## 10.4 Prohibited Operations
 
@@ -630,17 +640,30 @@ Validation:
 * Certain analytical rates may require a wider range later.
 * Percentage pools must be validated explicitly.
 
+Percentage validation belongs to the Rule Engine, not to Money.
+
+A single rate is valid on its own between 0 and 10,000 basis points. It carries no requirement to total 10,000 with anything else. A rate of 1,000 basis points, representing 10%, is a complete and valid configuration.
+
+An authored percentage pool must total exactly 10,000 basis points. This applies only to pools authored by the user. It does not apply to weights derived during calculation, which legitimately total less than 10,000 once a destination has been removed.
+
+Money performs no sum-to-10,000 validation of any kind. See Decision 071.
+
 ---
 
-# 12. Deterministic Percentage Allocation
+# 12. Deterministic Weighted Allocation
 
-When dividing money by percentages:
+All monetary division uses one weighted primitive. The denominator is the sum of the supplied weights. See Decision 071.
 
-1. Calculate each raw proportional share.
-2. Round down or use the documented base rounding strategy.
-3. Calculate remaining cents.
-4. Distribute remaining cents in deterministic priority order.
-5. Verify the output total equals the input total exactly.
+When dividing money by weights:
+
+1. Calculate each raw proportional share as `total × wᵢ / Σw`.
+2. Assign each destination the floor of its raw share.
+3. Calculate the remaining cents as the total minus the sum of the assigned shares.
+4. Distribute the remaining cents one at a time, largest fractional remainder first.
+5. Break ties by lowest index in caller-supplied order.
+6. Verify the output total equals the input total exactly.
+
+The remaining cents are always fewer than the number of weights, so exactly that many destinations receive one additional cent and no destination ever requires two.
 
 Example:
 
@@ -651,9 +674,17 @@ $100.00 split three ways:
 33.33
 ```
 
-The extra cent goes to the first eligible destination according to explicit ordering.
+Every fractional remainder is equal in an even split, so the tie-break decides. The extra cent goes to the first destination according to explicit ordering.
 
 Repository order must not affect this result.
+
+Callers supply canonical order. The primitive does not sort and does not interpret the meaning of a weight.
+
+Three cases reduce to this one procedure:
+
+* An even split supplies a weight of 1 for each destination.
+* An authored percentage pool supplies basis points summing to 10,000.
+* A single percentage obligation supplies the complementary pair `[rate, 10,000 − rate]`, which yields nearest-cent rounding with an exact half going to the obligation. The complement is an arithmetic device and is never emitted as an allocation line.
 
 ---
 
@@ -1501,6 +1532,7 @@ Examples:
 
 * `domain` cannot import from `presentation`.
 * `domain` cannot import from `infrastructure`.
+* `domain/shared` cannot import from `domain/allocations` or `domain/rules`.
 * `application` may import from `domain`.
 * `infrastructure` may implement application/domain interfaces.
 * `presentation` may call application services.
