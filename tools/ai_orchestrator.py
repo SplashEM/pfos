@@ -4,7 +4,6 @@ from pathlib import Path
 
 
 MAX_REVIEW_ROUNDS = 3
-
 EXPECTED_BRANCH = "milestone-2-rule-engine"
 
 
@@ -37,7 +36,7 @@ def run_command(command, repo_path):
 def git_status_short(repo_path):
     result = run_command(
         "git status --short",
-        repo_path
+        repo_path,
     )
 
     if result.returncode != 0:
@@ -51,7 +50,7 @@ def git_status_short(repo_path):
 def git_current_branch(repo_path):
     result = run_command(
         "git branch --show-current",
-        repo_path
+        repo_path,
     )
 
     if result.returncode != 0:
@@ -98,13 +97,62 @@ def run_codex_review(task, repo_path):
     print("CODEX REVIEW")
     print("========================================")
 
+    review_prompt = f"""
+You are the independent reviewer for an automated coding workflow.
+
+The implementation agent was given this exact task:
+
+--- ORIGINAL TASK ---
+{task}
+--- END ORIGINAL TASK ---
+
+Review the CURRENT repository working tree against that exact task.
+
+IMPORTANT:
+- Inspect `git status --short`.
+- Inspect all staged and unstaged tracked changes.
+- Inspect any untracked files that are relevant to the task.
+- An untracked file may be the intended deliverable. Do NOT treat a file
+  as invalid merely because it is untracked.
+- Do not assume changes must already be committed or staged.
+- Do not request a commit, push, merge, or PR.
+- Do not expand the task.
+- Do not request unrelated cleanup or refactors.
+- Optional improvements must not cause rejection.
+
+Return CHANGES_REQUESTED only if there is:
+1. a violation of an explicit requirement in the original task,
+2. a correctness defect,
+3. a meaningful regression,
+4. a violation of an existing project specification relevant to the task,
+5. or missing tests that are actually required to establish correctness.
+
+If the task is fully satisfied, approve it even if the resulting files are
+still untracked or uncommitted.
+
+Your FIRST LINE must be exactly one of:
+
+STATUS: APPROVED
+
+or
+
+STATUS: CHANGES_REQUESTED
+
+Then write:
+
+REVIEW:
+<your review>
+
+If requesting changes:
+- identify the exact defect,
+- identify the requirement it violates,
+- request only the minimum correction necessary.
+"""
+
     result = subprocess.run(
-        [
-            "codex",
-            "review",
-            "--uncommitted",
-        ],
+        "codex exec -",
         cwd=repo_path,
+        input=review_prompt,
         capture_output=True,
         text=True,
         shell=True,
@@ -117,28 +165,11 @@ def run_codex_review(task, repo_path):
         print(result.stderr)
         return None
 
-    output = result.stdout
+    output = result.stdout.strip()
 
     print(output)
 
-    # Codex's dedicated review mode does not necessarily emit
-    # our custom STATUS line, so translate its result into the
-    # format the orchestrator expects.
-    #
-    # For now:
-    # - no review findings -> APPROVED
-    # - any findings -> CHANGES_REQUESTED
-
-    normalized = output.strip()
-
-    if not normalized:
-        return "STATUS: APPROVED\n\nREVIEW:\nNo findings."
-
-    return (
-        "STATUS: CHANGES_REQUESTED\n\n"
-        "REVIEW:\n"
-        + output
-    )
+    return output
 
 
 def build_initial_claude_prompt(task):
@@ -234,7 +265,7 @@ def main():
     repo_path = Path(sys.argv[1]).resolve()
 
     if not repo_path.exists():
-        print(f"\nSTOPPED: repository does not exist:")
+        print("\nSTOPPED: repository does not exist:")
         print(repo_path)
         return
 
@@ -243,7 +274,7 @@ def main():
         print(repo_path)
         return
 
-    print(f"Target repository:")
+    print("Target repository:")
     print(repo_path)
 
     branch = git_current_branch(repo_path)
@@ -270,7 +301,21 @@ def main():
 
     print("✓ Working tree clean")
 
-    task = input("\nEnter task for Claude:\n> ").strip()
+    print("\nEnter task for Claude.")
+    print("Paste the full multi-line task below.")
+    print("When finished, type END on a new line.\n")
+
+    task_lines = []
+
+    while True:
+        line = input()
+
+        if line.strip() == "END":
+            break
+
+        task_lines.append(line)
+
+    task = "\n".join(task_lines).strip()
 
     if not task:
         print("No task provided.")
@@ -299,7 +344,7 @@ def main():
 
     for round_number in range(
         1,
-        MAX_REVIEW_ROUNDS + 1
+        MAX_REVIEW_ROUNDS + 1,
     ):
         print(
             f"\n******** REVIEW ROUND "
@@ -327,9 +372,7 @@ def main():
             print("\nFinal git status:")
             print(git_status_short(repo_path))
 
-            print(
-                "\nNothing was committed or pushed."
-            )
+            print("\nNothing was committed or pushed.")
 
             return
 
