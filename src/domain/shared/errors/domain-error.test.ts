@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { domainError } from './domain-error';
+import { domainError, type DomainError, type DomainErrorInput } from './domain-error';
 import { ERROR_CATEGORIES } from './error-category';
 import { ERROR_CODES } from './error-codes';
 
@@ -108,3 +108,70 @@ describe('domainError', () => {
     });
   });
 });
+
+/** A neutral closed registry, standing in for an engine-owned one. */
+type DemoCode = 'DEMO_ALPHA' | 'DEMO_BETA';
+
+/**
+ * Decision 073: the code travels as a type parameter.
+ *
+ * These cases prove the parameterisation from the shared side without naming
+ * any engine. `domain/shared` must stay free of engine knowledge, so the closed
+ * union above is a neutral stand-in for whatever registry an engine owns; the
+ * real registries are checked in
+ * src/test/architecture/error-code-registries.test.ts.
+ *
+ * The runtime behaviour asserted above is unchanged by Decision 073. That suite
+ * passing untouched is the evidence.
+ */
+describe('generic error codes (Decision 073)', () => {
+  it('carries a shared error code unchanged', () => {
+    const error = domainError({
+      code: ERROR_CODES.MONEY_UNSAFE_INTEGER,
+      category: ERROR_CATEGORIES.VALIDATION,
+      summary: 'That amount is too large to represent exactly.',
+    });
+
+    expect(error.code).toBe('MONEY_UNSAFE_INTEGER');
+  });
+
+  it('carries a caller-supplied closed union', () => {
+    const input: DomainErrorInput<DemoCode> = {
+      code: 'DEMO_ALPHA',
+      category: ERROR_CATEGORIES.CONFLICT,
+      summary: 'A caller-owned registry supplies its own code.',
+    };
+    const error: DomainError<DemoCode> = domainError(input);
+
+    expect(error.code).toBe('DEMO_ALPHA');
+  });
+
+  it('narrows the result to the supplied code', () => {
+    const error = domainError({
+      code: ERROR_CODES.DATE_INVALID_TIME_ZONE,
+      category: ERROR_CATEGORIES.VALIDATION,
+      summary: 'A timestamp must carry a time zone.',
+    });
+
+    expect(error.code).toBe('DATE_INVALID_TIME_ZONE');
+  });
+});
+
+/**
+ * Never executed; see the equivalent block in
+ * src/domain/rules/errors/rule-error.test.ts. tsc fails if the directive below
+ * is unused, which asserts that a code outside the supplied union does not
+ * compile. Nothing invalid is constructed at runtime.
+ */
+const COMPILE_TIME_ONLY: boolean = false;
+
+if (COMPILE_TIME_ONLY) {
+  const outsideTheUnion: DomainErrorInput<DemoCode> = {
+    // @ts-expect-error - Decision 073: a supplied union stays closed to its own codes.
+    code: 'DEMO_GAMMA',
+    category: ERROR_CATEGORIES.CONFLICT,
+    summary: 'Outside the supplied union.',
+  };
+
+  domainError(outsideTheUnion);
+}
