@@ -98,42 +98,11 @@ def run_codex_review(task, repo_path):
     print("CODEX REVIEW")
     print("========================================")
 
-    review_instructions = f"""
-The implementation task was:
-
---- TASK ---
-{task}
---- END TASK ---
-
-Review the current uncommitted changes strictly against this task
-and the repository's existing specifications.
-
-Do not expand the scope.
-
-Only report a finding if it is:
-- a correctness defect
-- a violation of an explicit task requirement
-- a meaningful regression
-- a violation of an existing project specification
-- a missing test required to establish correctness
-
-Ignore purely optional improvements.
-
-Conclude clearly with exactly one of:
-
-STATUS: APPROVED
-
-or
-
-STATUS: CHANGES_REQUESTED
-"""
-
     result = subprocess.run(
         [
             "codex",
             "review",
             "--uncommitted",
-            review_instructions,
         ],
         cwd=repo_path,
         capture_output=True,
@@ -148,9 +117,28 @@ STATUS: CHANGES_REQUESTED
         print(result.stderr)
         return None
 
-    print(result.stdout)
+    output = result.stdout
 
-    return result.stdout
+    print(output)
+
+    # Codex's dedicated review mode does not necessarily emit
+    # our custom STATUS line, so translate its result into the
+    # format the orchestrator expects.
+    #
+    # For now:
+    # - no review findings -> APPROVED
+    # - any findings -> CHANGES_REQUESTED
+
+    normalized = output.strip()
+
+    if not normalized:
+        return "STATUS: APPROVED\n\nREVIEW:\nNo findings."
+
+    return (
+        "STATUS: CHANGES_REQUESTED\n\n"
+        "REVIEW:\n"
+        + output
+    )
 
 
 def build_initial_claude_prompt(task):
