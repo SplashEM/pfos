@@ -2999,6 +2999,1016 @@ Reconsider if a rule type introduces a capacity that can increase during an allo
 
 ---
 
+# Decision 073: Domain Errors Use Engine-Owned Error Code Registries
+
+**Status:** Accepted
+**Related:** Decisions 006, 068, 071
+**Scope:** Architecture, Engineering
+
+## Decision
+
+The shared layer owns the domain error envelope. Each engine owns the registry of error codes it introduces.
+
+### Shared ownership
+
+`src/domain/shared/errors/` owns the `DomainError` envelope, the `Result` pattern, error categories, and the error codes belonging to shared primitives.
+
+`ERROR_CODES` remains limited to the shared primitive families:
+
+- `MONEY_*`
+- `BASIS_POINTS_*`
+- `DATE_*`
+
+Engine-specific codes are never added to it.
+
+`ErrorCategory` and `ERROR_CATEGORIES` remain shared and closed. This decision changes code ownership only. An engine maps its failures onto the existing categories defined by PFOS-ENG-00 and does not add new categories through its error registry.
+
+### Generic envelope
+
+`DomainError` and `DomainErrorInput` are generic over the code:
+
+```ts
+export interface DomainError<TCode extends string = string> {
+  readonly code: TCode;
+  readonly category: ErrorCategory;
+  readonly summary: string;
+  readonly details?: string;
+  readonly affectedEntityIds?: readonly string[];
+  readonly suggestedResolution?: string;
+}
+
+export interface DomainErrorInput<TCode extends string = string> {
+  readonly code: TCode;
+  readonly category: ErrorCategory;
+  readonly summary: string;
+  readonly details?: string;
+  readonly affectedEntityIds?: readonly string[];
+  readonly suggestedResolution?: string;
+}
+
+export function domainError<TCode extends string>(
+  input: DomainErrorInput<TCode>,
+): DomainError<TCode>;
+```
+
+The default of `string` allows an existing caller to name the shared envelope without supplying a type argument.
+
+When a caller supplies a code from a closed registry, `TCode` preserves that registry's type.
+
+### Engine ownership
+
+Each engine declares its own closed literal union and constructs errors narrowed to that union.
+
+The Rule Engine uses the `RULE_*` prefix:
+
+```ts
+export const RULE_ERROR_CODES = {
+  // engine-owned codes
+} as const;
+
+export type RuleErrorCode =
+  (typeof RULE_ERROR_CODES)[keyof typeof RULE_ERROR_CODES];
+
+export type RuleDomainError = DomainError<RuleErrorCode>;
+
+export function ruleError(
+  input: DomainErrorInput<RuleErrorCode>,
+): RuleDomainError;
+```
+
+A code outside the Rule Engine registry, including a valid shared `MONEY_*` or `DATE_*` code, is rejected by the Rule Engine constructor at compile time.
+
+Future engines own their own registries under their own prefixes:
+
+- Allocation Engine: `ALLOCATION_*`
+- Goal Engine: `GOAL_*`
+
+### Prohibited mechanisms
+
+The shared layer must never import an engine error-code type.
+
+Declaration merging and a global engine-code registry are prohibited.
+
+A shared registry whose meaning changes depending on which engine modules are present would make a shared type depend implicitly on higher-level modules and create an unwanted coupling channel between engines.
+
+### Enforcement
+
+Because independently declared registries cannot provide compiler-enforced global uniqueness, registry separation is enforced by prefix conventions and architecture tests.
+
+Architecture tests must enforce that:
+
+- every Rule Engine error-code key and value begins with `RULE_`
+- every registry key is identical to its value
+- no Rule Engine error code appears in shared `ERROR_CODES`
+- shared `ERROR_CODES` contains no engine-prefixed key or value
+- shared `ERROR_CODES` contains only the shared primitive families
+- engine and shared registry values are disjoint
+- shared production sources import no engine module
+
+The existing shared-primitive boundary tests are not weakened.
+
+`RULE_*` constants do not belong in `domain/shared`.
+
+### Runtime behavior
+
+Milestone 1 `DomainError` runtime behavior is unchanged.
+
+The construction function continues to freeze its result, omit absent optional properties rather than assigning them `undefined`, and preserve the existing immutable-envelope behavior.
+
+This decision changes error-code typing and ownership, not the runtime error shape.
+
+## Why
+
+PFOS-ENG-00 requires domain failures to carry typed, stable codes, and PFOS-ENG-01 requires the Rule Engine to return typed errors with stable identifiers.
+
+Before this decision, `DomainError.code` was constrained to the closed union exported by the shared primitive error registry.
+
+That created a conflict: adding `RULE_*` codes to shared would give `domain/shared` Rule Engine vocabulary, violating the intended dependency boundary and the primitive-isolation architecture enforced by the existing shared-boundary tests.
+
+The Rule Engine therefore needed a way to preserve a closed, typed error vocabulary without making shared own engine-specific names.
+
+The shared envelope is generic; the engine owns the vocabulary.
+
+This preserves both requirements.
+
+## Alternatives Considered
+
+- Add `RULE_*` codes to the shared registry
+- Widen all domain error codes to bare `string`
+- Introduce a branded global code type
+- Use declaration merging to create a global engine-code registry
+
+Adding `RULE_*` to shared is rejected because it weakens the architectural boundary in order to accommodate the code that boundary exists to exclude.
+
+Using bare `string` is rejected because it discards the per-engine closed-union guarantee.
+
+A branded shared code type is rejected because engine literals would require additional casts or constructors without solving the ownership problem.
+
+Declaration merging is rejected because the effective definition of a shared type would depend on which engine modules participate in compilation.
+
+## Tradeoffs
+
+Global code uniqueness is no longer guaranteed by the compiler alone.
+
+The guarantee moves to engine-specific prefixes plus architecture tests.
+
+Exhaustive handling of every possible system error code as one universal union is no longer available automatically. Consumers instead handle the closed union belonging to the engine boundary they consume.
+
+The shared envelope's default type parameter is broad, so engine constructors must explicitly narrow it to their engine-owned code union.
+
+## Consequences
+
+Milestone 2 can emit typed Rule Engine errors without adding Rule Engine vocabulary to shared primitives.
+
+The Rule Engine owns `RULE_ERROR_CODES`, `RuleErrorCode`, `RuleDomainError`, and `ruleError`.
+
+The Rule Engine registry is deliberately introduced incrementally. At adoption it contains only codes whose meanings are already settled by accepted decisions.
+
+The first codes are the authored percentage-pool validation failures already assigned to the Rule Engine by Decision 071:
+
+- `RULE_POOL_NOT_EXACTLY_100_PERCENT`
+- `RULE_POOL_ENTRY_OUT_OF_RANGE`
+
+Additional Rule Engine codes are introduced when the validation behavior they report is itself specified.
+
+`src/domain/shared/errors/error-codes.ts` remains limited to the shared primitive families.
+
+`ERROR_CATEGORIES` is unchanged and remains shared.
+
+Future Allocation and Goal engines use the same ownership pattern with their own prefixes.
+
+## Future Review Trigger
+
+Reconsider if the number of engine registries makes prefix collision sufficiently difficult to manage that a compiler-enforced cross-engine mechanism becomes worth the additional coupling.
+
+Also reconsider if error codes become persisted external identifiers that require runtime validation against a composed registry.
+
+---
+
+# Decision 074: ResolvedRuleSet Contract and M2/M3 Execution Boundary
+
+**Status:** Accepted
+**Related:** Decisions 006, 007, 010, 013, 014, 016, 017, 020, 021, 022, 023, 025, 026, 027, 028, 071, 072, 073
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+`ResolvedRuleSet` is the single output of the Rule Engine and the single rule input to the Allocation Engine.
+
+This decision fixes its exact TypeScript contract, resolving the deferral in PFOS-ENG-01 Section 23.
+
+The Rule Engine resolves policy.
+
+The Allocation Engine executes that resolved policy.
+
+The Rule Engine must not calculate final allocation amounts.
+
+The Allocation Engine must not independently re-resolve rule precedence.
+
+## Root contract
+
+```ts
+export interface ResolvedRuleSet {
+  // Provenance
+  readonly resolvedRuleSetId: EntityId;
+  readonly planVersionId: PlanVersionId;
+  readonly schemaVersion: number;
+  readonly roundingPolicyId: string;
+  readonly resolvedAt: Timestamp;
+  readonly evaluationDate: FinancialDate;
+  readonly resolutionMode: ResolutionMode;
+  readonly historicalSnapshotId?: EntityId;
+  readonly sourceRuleVersionIds: readonly EntityId[];
+
+  // Executable output
+  readonly allocationBasis: AllocationBasis;
+  readonly stageSequence: readonly AllocationStage[];
+  readonly globalObligations: readonly ResolvedGlobalObligation[];
+  readonly topPriorities: ResolvedTopPriorityPlan;
+  readonly requiredFundingRules: readonly ResolvedFundingRule[];
+  readonly lowerPriorityPool: ResolvedPoolPlan;
+  readonly leftoverPolicy: ResolvedLeftoverPolicy;
+  readonly rolloverPolicies: readonly ResolvedRolloverPolicy[];
+  readonly goalPolicies: readonly ResolvedGoalPolicy[];
+
+  // Non-executable output
+  readonly skippedRules: readonly SkippedRule[];
+  readonly warnings: readonly DomainWarning[];
+  readonly explanations: readonly RuleExplanation[];
+}
+```
+
+PFOS-ENG-01 Section 23's `effectiveAt` concept is represented by two fields:
+
+- `evaluationDate: FinancialDate` for the date against which rules are evaluated
+- `resolvedAt: Timestamp` for the moment the resolution occurred
+
+This follows PFOS-ENG-00's distinction between date-only financial concepts and moments in time.
+
+## Identity and provenance
+
+```ts
+export type PlanVersionId = EntityId;
+
+export type ResolutionMode =
+  | 'PREVIEW'
+  | 'SIMULATION'
+  | 'HISTORICAL_RECALCULATION';
+```
+
+`PlanVersionId` is a semantic provenance alias for V1. No second branded identifier type is introduced.
+
+`planVersionId` identifies the version of the user's plan configuration from which the resolved rule set was produced.
+
+It is not:
+
+- `resolvedRuleSetId`
+- a Plan Snapshot identifier
+- `historicalSnapshotId`
+
+V1 preserves that distinction through field names, construction paths, documentation, and tests rather than through a second identifier brand.
+
+`resolutionMode` records the resolution context so simulated or historical results cannot be mistaken for ordinary preview resolution.
+
+## Enumerations
+
+```ts
+export type AllocationBasis =
+  | 'NET_AMOUNT'
+  | 'ELIGIBLE_AMOUNT';
+
+export type IncomeBasis =
+  | 'NET_DEPOSITED';
+
+export type Recurrence =
+  | 'MONTHLY';
+
+export type PercentageBasis =
+  | 'PERCENT_OF_TOTAL_INCOME'
+  | 'PERCENT_OF_REMAINING_POOL';
+
+export type AllocationStage =
+  | 'GLOBAL_OBLIGATION'
+  | 'TOP_PRIORITY'
+  | 'REQUIRED_RECURRING'
+  | 'GOAL_FUNDING'
+  | 'LOWER_PRIORITY'
+  | 'EVERYDAY_SPENDING'
+  | 'LEFTOVER_POLICY'
+  | 'EVENT_OVERRIDE';
+```
+
+`allocationBasis` identifies which starting amount the Allocation Engine uses. It does not carry or calculate that amount.
+
+`IncomeBasis` is a separate selector describing the authored income basis of an obligation.
+
+V1 exposes only `NET_DEPOSITED`.
+
+`Recurrence` supports only `MONTHLY` in V1. No additional recurrence may be introduced without an accepted specification.
+
+`PercentageBasis` keeps percent-of-total-income and percent-of-remaining-pool as explicit, distinct concepts.
+
+## Allocation stage ownership
+
+The Rule Engine owns `AllocationStage`.
+
+PFOS-ENG-02 enumerates the stages, but the resolved rule set determines their order.
+
+The type therefore belongs under the Rule Engine contract layer, and the Allocation Engine imports and consumes it.
+
+`domain/rules` must not import an Allocation Engine type merely to express a sequence the Rule Engine owns.
+
+`EVERYDAY_SPENDING` remains part of the documented stage vocabulary but is not emitted by V1.
+
+V1 represents lower-priority and everyday-spending behavior through one executable lower-priority pool.
+
+## Global obligations
+
+```ts
+export interface ResolvedGlobalObligation {
+  readonly obligationId: EntityId;
+  readonly ruleVersionId: EntityId;
+  readonly destinationBucketId: EntityId;
+  readonly rateBasisPoints: BasisPoints;
+  readonly incomeBasis: IncomeBasis;
+  readonly maximumAmount?: Money;
+  readonly sequence: number;
+}
+```
+
+Separately authored obligations remain independent.
+
+They are not collapsed into one N-way percentage split.
+
+`sequence` is financially meaningful where separately authored obligations must be evaluated in a defined order.
+
+Decision 071 supplies the uniform monetary-division and rounding rules.
+
+No per-rule rounding field exists.
+
+## Top priorities
+
+```ts
+export type ResolvedTopPriorityPlan =
+  | {
+      readonly strategy: 'SEQUENTIAL';
+      readonly entries: readonly ResolvedTopPriorityEntry[];
+    }
+  | {
+      readonly strategy: 'PERCENTAGE_SPLIT';
+      readonly entries: readonly ResolvedTopPriorityShare[];
+    };
+
+export interface ResolvedTopPriorityEntry {
+  readonly bucketId: EntityId;
+  readonly rank: number;
+  readonly ruleVersionIds: readonly EntityId[];
+}
+
+export interface ResolvedTopPriorityShare
+  extends ResolvedTopPriorityEntry {
+  readonly shareBasisPoints: BasisPoints;
+}
+```
+
+The Rule Engine chooses the strategy.
+
+Top-priority entries are ordered by ascending rank.
+
+Percentage-split shares are authored `BasisPoints` values and are validated by M2 under Decision 071 before M3 receives them.
+
+M3 does not reinterpret or re-resolve the top-priority strategy.
+
+## Required funding rules
+
+```ts
+export interface ResolvedFundingRule {
+  readonly bucketId: EntityId;
+  readonly ruleVersionId: EntityId;
+  readonly sequence: number;
+  readonly isProtected: boolean;
+  readonly allowExcessAboveCapacity: boolean;
+  readonly funding: FundingRuleConfig;
+}
+
+export type FundingRuleConfig =
+  | {
+      readonly type: 'PERCENTAGE_OF_INCOME';
+      readonly rateBasisPoints: BasisPoints;
+      readonly incomeBasis: IncomeBasis;
+      readonly maximumAmount?: Money;
+    }
+  | {
+      readonly type: 'FIXED_PER_PAYCHECK';
+      readonly amount: Money;
+      readonly startDate?: FinancialDate;
+      readonly endDate?: FinancialDate;
+      readonly maximumAmount?: Money;
+    }
+  | {
+      readonly type: 'FIXED_MONTHLY';
+      readonly monthlyTarget: Money;
+      readonly allowExtraContributions: boolean;
+    }
+  | {
+      readonly type: 'RECURRING_BILL';
+      readonly targetAmount: Money;
+      readonly dueDate: FinancialDate;
+      readonly recurrence: Recurrence;
+    }
+  | {
+      readonly type: 'GOAL_UNTIL_TARGET';
+      readonly targetAmount: Money;
+      readonly deadline?: FinancialDate;
+      readonly stopAtTarget: boolean;
+      readonly allowManualExcess: boolean;
+    }
+  | {
+      readonly type: 'MONTHLY_MINIMUM_PLUS_EXTRA';
+      readonly monthlyMinimum: Money;
+      readonly extraEligible: boolean;
+    }
+  | {
+      readonly type: 'UNLIMITED';
+      readonly minimumAmount?: Money;
+    }
+  | {
+      readonly type: 'DEBT_PAYOFF';
+      readonly minimumPayment: Money;
+      readonly dueDate?: FinancialDate;
+      readonly extraPaymentEligible: boolean;
+      readonly targetPayoffAmount?: Money;
+    };
+```
+
+Every variant is a discriminated union.
+
+The Rule Engine emits authored monetary requirements where the rule itself stores money.
+
+It does not calculate the amount that will actually be allocated.
+
+`allowExcessAboveCapacity` records resolved policy. Capacity itself is calculated by M3 from bucket state.
+
+`isProtected` records whether the requirement receives protected treatment under the Allocation Engine specification.
+
+## No V1 recurring-bill underfunding configuration
+
+`RECURRING_BILL` carries no `underfundingBehavior`.
+
+The specification names the concept without defining its values or semantics.
+
+M2 describes the authored requirement.
+
+M3 calculates funded and unmet amounts.
+
+A configurable underfunding policy requires a later accepted decision.
+
+## Lower-priority pool
+
+```ts
+export type ResolvedPoolPlan =
+  | {
+      readonly strategy: 'EVEN_SPLIT';
+      readonly destinations: readonly ResolvedPoolDestination[];
+    }
+  | {
+      readonly strategy: 'PERCENTAGE_SPLIT';
+      readonly basis: PercentageBasis;
+      readonly destinations: readonly ResolvedPoolShare[];
+    }
+  | {
+      readonly strategy: 'FIXED_AMOUNTS';
+      readonly destinations: readonly ResolvedPoolFixedAmount[];
+    };
+
+export interface ResolvedPoolDestination {
+  readonly bucketId: EntityId;
+  readonly ruleVersionIds: readonly EntityId[];
+}
+
+export interface ResolvedPoolShare
+  extends ResolvedPoolDestination {
+  readonly shareBasisPoints: BasisPoints;
+}
+
+export interface ResolvedPoolFixedAmount
+  extends ResolvedPoolDestination {
+  readonly amount: Money;
+  readonly sequence: number;
+}
+```
+
+V1 represents lower-priority and everyday-spending allocation as one executable `lowerPriorityPool`.
+
+A separate `everydaySpendingRules` field is not part of V1.
+
+Two executable pools require a later accepted decision establishing behavior that meaningfully distinguishes them.
+
+`FIXED_AMOUNTS` uses `sequence` where competition order is financially meaningful.
+
+Set-like percentage and even-split destinations do not derive financial meaning from array index.
+
+## Leftover policy
+
+```ts
+export type ResolvedLeftoverPolicy =
+  | {
+      readonly policyType: 'LEAVE_UNALLOCATED';
+    }
+  | {
+      readonly policyType: 'SINGLE_DESTINATION';
+      readonly destinationBucketId: EntityId;
+    }
+  | {
+      readonly policyType: 'PERCENTAGE_SPLIT';
+      readonly destinations: readonly ResolvedPoolShare[];
+    }
+  | {
+      readonly policyType: 'HIGHEST_PRIORITY_UNFINISHED_GOAL';
+    }
+  | {
+      readonly policyType: 'MAINTAIN_BUFFER_THEN_REDIRECT';
+      readonly bufferAmount: Money;
+      readonly destinationBucketId: EntityId;
+    };
+```
+
+## No V1 leftover fallback
+
+No leftover-policy variant carries a fallback.
+
+If a destination cannot receive the remainder and no existing policy redirects it, the remainder stays unallocated.
+
+The fallback language in PFOS-ENG-02 is treated as forward-looking until an explicit fallback contract is accepted.
+
+`HIGHEST_PRIORITY_UNFINISHED_GOAL` carries no resolved goal-state calculation.
+
+The Goal Engine/orchestrator supplies or determines the relevant goal state; M2 does not compute funded state as allocation arithmetic.
+
+## Rollover policies
+
+```ts
+export interface ResolvedRolloverPolicy {
+  readonly bucketId: EntityId;
+  readonly ruleVersionId: EntityId;
+  readonly policy: RolloverPolicyConfig;
+}
+
+export type RolloverPolicyConfig =
+  | {
+      readonly policyType: 'CARRY_ALL';
+    }
+  | {
+      readonly policyType: 'RESET';
+    }
+  | {
+      readonly policyType: 'CARRY_TO_CAP';
+      readonly capAmount: Money;
+    }
+  | {
+      readonly policyType: 'REDIRECT_EXCESS';
+      readonly capAmount: Money;
+      readonly destinationBucketId: EntityId;
+    }
+  | {
+      readonly policyType: 'APPLY_LEFTOVER_POLICY';
+      readonly capAmount: Money;
+    };
+```
+
+## Goal policies
+
+```ts
+export interface ResolvedGoalPolicy {
+  readonly bucketId: EntityId;
+  readonly ruleVersionId: EntityId;
+  readonly stopAtTarget: boolean;
+  readonly allowManualExcess: boolean;
+  readonly autoStartNextCycle: boolean;
+  readonly resumeRequiresConfirmation: boolean;
+}
+```
+
+This is configuration only.
+
+The resolved rule set does not carry computed goal balances or derive a final funded amount.
+
+## Rule Engine-owned registries
+
+The Rule Engine owns three independent closed code registries:
+
+```text
+RULE_*          Rule Engine errors
+RULE_EXPLAIN_*  Rule Engine explanation codes
+RULE_SKIP_*     Rule Engine skip-reason codes
+```
+
+Errors, skip reasons, and explanations are intentionally different concepts.
+
+An error represents a domain failure.
+
+A skip reason is a machine-readable rule-resolution outcome.
+
+An explanation is user-facing reasoning about how resolution occurred.
+
+They must not be conflated.
+
+## Skipped rules
+
+```ts
+export interface SkippedRule {
+  readonly ruleId: EntityId;
+  readonly ruleVersionId?: EntityId;
+  readonly reasonCode: RuleSkipReasonCode;
+  readonly affectedEntityIds: readonly EntityId[];
+}
+
+export type RuleSkipReasonCode =
+  | 'RULE_SKIP_NOT_EFFECTIVE_ON_EVALUATION_DATE'
+  | 'RULE_SKIP_SUPERSEDED_BY_HIGHER_PRECEDENCE'
+  | 'RULE_SKIP_INCOME_SOURCE_EXCLUDED'
+  | 'RULE_SKIP_DESTINATION_ARCHIVED'
+  | 'RULE_SKIP_GOAL_FUNDED_ALLOCATION_PAUSED'
+  | 'RULE_SKIP_EVENT_OVERRIDE_SKIPPED';
+```
+
+The reasons correspond to Rule Engine resolution outcomes already described by PFOS-ENG-01 and PFOS-ENG-02.
+
+Allocation-time conditions such as no remaining income, a capacity reached during execution, or a monthly requirement already satisfied are not Rule Engine skip reasons.
+
+They belong to M3 runtime reporting.
+
+An invalid destination that blocks rule activation is a validation error rather than a skipped resolved rule.
+
+## Rule explanation codes
+
+```ts
+export type RuleExplanationCode =
+  | 'RULE_EXPLAIN_RESOLUTION_CONTEXT'
+  | 'RULE_EXPLAIN_RULE_APPLIED'
+  | 'RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY'
+  | 'RULE_EXPLAIN_RULE_OVERRIDDEN'
+  | 'RULE_EXPLAIN_DEFAULT_INHERITED'
+  | 'RULE_EXPLAIN_RULE_SKIPPED';
+```
+
+The union derives from PFOS-ENG-01 Section 24's explainability contract.
+
+`RULE_EXPLAIN_RESOLUTION_CONTEXT` covers the inputs and rule/plan context used during resolution.
+
+`RULE_EXPLAIN_RULE_APPLIED` records a selected rule.
+
+`RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` records an additive rule that survives alongside another applicable rule.
+
+`RULE_EXPLAIN_RULE_OVERRIDDEN` records a lower-precedence rule replaced by a higher-precedence rule.
+
+`RULE_EXPLAIN_DEFAULT_INHERITED` records inheritance of an applicable default where no replacing override exists.
+
+`RULE_EXPLAIN_RULE_SKIPPED` records a skipped rule and pairs with the machine-readable `RULE_SKIP_*` reason.
+
+Warning categories remain on the warning channel as `DomainWarning` and are not duplicated as explanation codes.
+
+`RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` has no producer until additive-versus-replacing behavior is fully classified.
+
+## Explanation envelope ownership
+
+The shared layer owns an engine-agnostic explanation envelope.
+
+Each engine owns its explanation-code vocabulary.
+
+Shared never imports an engine explanation type.
+
+```ts
+export interface Explanation<
+  TCode extends string = string,
+  TDetail = never,
+> {
+  readonly code: TCode;
+  readonly title: string;
+  readonly summary: string;
+  readonly affectedEntityIds: readonly EntityId[];
+  readonly details?: readonly TDetail[];
+  readonly ruleVersionIds?: readonly EntityId[];
+  readonly severity?: ExplanationSeverity;
+}
+
+export type ExplanationSeverity =
+  | 'INFO'
+  | 'SUCCESS'
+  | 'WARNING';
+
+export type RuleExplanation =
+  Explanation<RuleExplanationCode>;
+```
+
+The shared envelope uses `affectedEntityIds`, aligning error, warning, and explanation output around the same affected-entity terminology.
+
+A concrete `RuleExplanationDetail` vocabulary is not introduced in V1.
+
+The second generic argument therefore remains `never` for Rule Engine explanations, making structured details unavailable rather than merely unused.
+
+V1 Rule Engine explanations still carry the stable code, title, summary, affected entity identifiers, and optional rule-version identifiers and severity.
+
+## No per-rule rounding
+
+Decision 071 is authoritative.
+
+`ResolvedRuleSet` carries:
+
+```ts
+readonly roundingPolicyId: string;
+```
+
+and no per-rule rounding strategy.
+
+PFOS-ENG-01's configurable per-rule rounding field and PFOS-ENG-02's corresponding per-rule input are superseded for V1 by Decision 071's uniform monetary-division policy.
+
+`roundingPolicyId` is a string rather than the current literal so a historical snapshot can preserve the identifier that applied when that snapshot was created.
+
+## M2 ownership
+
+The Rule Engine owns rule resolution.
+
+It:
+
+- resolves precedence and inheritance
+- selects the applicable rule version by effective date
+- determines the allocation basis
+- determines the allocation-stage sequence
+- resolves global obligations
+- resolves the top-priority strategy and membership
+- determines required-funding competition order
+- resolves the lower-priority strategy
+- resolves leftover policy
+- resolves rollover policy
+- resolves goal policy
+- validates authored single percentages
+- validates authored percentage pools
+- detects Rule Engine cycles and invalid references
+- emits warnings
+- emits skipped-rule reasons
+- emits explanations
+- records provenance and the rounding-policy identifier
+- canonicalizes its result deterministically
+
+The Rule Engine must not calculate final allocation amounts.
+
+The only `Money` values permitted in `ResolvedRuleSet` are authored monetary requirements that a rule itself stores.
+
+The resolved set does not contain calculated:
+
+- allocation amounts
+- remaining pools
+- capacity amounts
+- shortfalls
+- unmet amounts
+- allocation lines
+- allocation components
+
+## M3 ownership
+
+The Allocation Engine owns monetary execution.
+
+It:
+
+- establishes the executable pool from the basis M2 names
+- computes obligation amounts using the shared monetary-division primitive
+- derives destination capacity from current bucket state
+- executes sequential top-priority funding
+- executes percentage top-priority funding
+- executes required-funding rules
+- performs capacity-constrained redistribution under Decision 072
+- executes lower-priority allocation
+- executes the leftover policy
+- calculates the remaining pool
+- calculates shortfalls and unmet amounts
+- calculates available-to-allocate
+- emits allocation lines and components
+- verifies the allocation conservation invariant
+
+The Allocation Engine must not re-resolve rule precedence.
+
+It consumes `ResolvedRuleSet` as authoritative input.
+
+## Plan Snapshot relationship
+
+A Plan Snapshot stores the resolved configuration by value so historical results can be reconstructed without relying on mutable current rules.
+
+The snapshot includes the complete `ResolvedRuleSet`, including:
+
+- `roundingPolicyId`
+- `evaluationDate`
+- resolved executable structures
+- warnings
+- explanations
+- skip outcomes
+- provenance
+
+`sourceRuleVersionIds` and `planVersionId` remain references identifying the versions that produced the resolved values.
+
+Snapshot-specific event history remains outside `ResolvedRuleSet`.
+
+Examples include:
+
+- event type
+- event identifier
+- snapshot creation timestamp
+- confirmed event overrides
+
+Overrides are inputs to resolution and are recorded as event history at confirmation; they are not themselves part of the resolved answer.
+
+## Deterministic ordering and canonicalization
+
+Identical inputs must produce a deep-equal `ResolvedRuleSet`.
+
+Two different ordering responsibilities exist and must not be confused.
+
+### Rule Engine-owned financial ordering
+
+M2 owns:
+
+- `stageSequence`
+- top-priority entries ordered by ascending rank
+- global obligations ordered by financially meaningful `sequence`
+- required funding rules ordered by financially meaningful `sequence`
+- `FIXED_AMOUNTS` destinations ordered by financially meaningful `sequence`
+
+These orderings affect execution semantics.
+
+### Allocation Engine-owned residual-cent ordering
+
+M3 owns destination canonical ordering for residual-cent tie-breaks.
+
+The canonical order defined by PFOS-ENG-02 and Decision 071 is:
+
+1. priority rank ascending, with unranked destinations last
+2. stable order ascending
+3. bucket identifier lexicographic
+
+Those sort keys belong to Allocation Engine bucket state.
+
+`ResolvedRuleSet` therefore does not carry a second canonical destination-order list.
+
+### Reproducibility-only ordering
+
+Arrays whose index has no financial meaning are still emitted canonically for deterministic deep equality.
+
+For V1:
+
+- set-like pool destinations are ordered by bucket identifier
+- leftover percentage destinations are ordered by bucket identifier
+- rollover policies are ordered by bucket identifier
+- goal policies are ordered by bucket identifier
+- `sourceRuleVersionIds` is de-duplicated and sorted
+- `skippedRules` is ordered by rule identifier
+
+Objects and arrays in the resolved contract are immutable and frozen according to domain conventions.
+
+## Why
+
+PFOS-ENG-01 described the Rule Engine as authoritative for rule applicability, precedence, inheritance, and resolution, while PFOS-ENG-02 consumed a `ResolvedRuleSet` without a final contract defining what that object contained.
+
+Without a fixed boundary, M2 could not produce a stable output and M3 would be forced to guess at Rule Engine semantics.
+
+That would violate the architecture principle that each financial calculation and policy decision has one authoritative owner.
+
+This decision gives M2 a complete policy output and gives M3 a complete execution input.
+
+The contract includes only values M3 needs in order to execute without re-resolving policy.
+
+It excludes calculated monetary results that belong to M3.
+
+## Alternatives Considered
+
+- Keep separate `lowerPriorityRules` and `everydaySpendingRules`
+- Let the Allocation Engine own `AllocationStage`
+- Introduce a separately branded `PlanVersionId`
+- Define a concrete shared `ExplanationDetail`
+- Support configurable per-rule rounding
+- Define configurable recurring-bill underfunding behavior
+- Define a configurable leftover fallback
+- Put a canonical destination ordering directly into `ResolvedRuleSet`
+- Reuse skip-reason codes as explanation codes
+
+Separate lower-priority and everyday-spending structures are rejected for V1 because the current product decisions define one executable lower-priority/everyday category concept.
+
+Allocation Engine ownership of `AllocationStage` is rejected because M2 owns the sequence and M3 consumes it; reversing the dependency would make the producer import a type from its consumer.
+
+A separate `PlanVersionId` brand is rejected for V1 because the architecture currently uses one opaque entity-identifier primitive and the additional brand provides limited value relative to its complexity.
+
+A concrete `ExplanationDetail` is deferred because no specification defines its vocabulary.
+
+Per-rule rounding is rejected by Decision 071.
+
+Configurable recurring-bill underfunding behavior is deferred because its values and semantics are unspecified.
+
+A configurable leftover fallback is deferred because its shape and semantics are unspecified.
+
+A destination ordering in `ResolvedRuleSet` is rejected because M3 already owns the bucket-state fields required for its residual-cent ordering.
+
+Skip reasons and explanations remain separate because they serve different consumers and purposes.
+
+## Tradeoffs
+
+The contract is intentionally broad because it represents the complete M2-to-M3 policy boundary.
+
+`EVERYDAY_SPENDING` exists in the stage union despite having no V1 producer.
+
+`RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` exists despite having no producer until additive/replacing semantics are settled.
+
+`PlanVersionId` is semantically distinct but not type-distinct from another `EntityId`, so misuse must be prevented through construction paths and tests rather than branding.
+
+Structured Rule Engine explanation details remain unavailable in V1.
+
+Some existing engineering-spec text is superseded by this decision, particularly the previously listed per-rule rounding configuration, the undefined recurring-bill underfunding field, and the undefined leftover fallback.
+
+## Consequences
+
+Milestone 2 may implement the approved contract types.
+
+Milestone 3 may design and implement against a fixed Rule Engine output.
+
+The Rule Engine output contract no longer depends on Allocation Engine types.
+
+The Allocation Engine receives enough information to execute without deciding precedence itself.
+
+Architecture tests should enforce the distinct Rule Engine code prefixes:
+
+- `RULE_*`
+- `RULE_EXPLAIN_*`
+- `RULE_SKIP_*`
+
+Changing the persisted resolved contract after snapshots exist requires a schema-version change.
+
+## Remaining Milestone 2 semantic blockers
+
+Decision 074 fixes the `ResolvedRuleSet` contract.
+
+It does not resolve every remaining M2 semantic question.
+
+These are not a general prohibition on M2 implementation. Components whose governing contracts are already settled may proceed.
+
+### C — Additive versus replacing semantics
+
+PFOS-ENG-01 establishes precedence except where a rule type defines additive behavior, but it does not classify every relevant rule category as additive or replacing.
+
+This gates:
+
+- precedence resolution
+- resolver behavior
+- production of `RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY`
+
+The approved contract can represent either result.
+
+### D — Minimum top-priority count
+
+The specification says top priorities may number one to three while also referring to cases where zero may be permitted during onboarding.
+
+The exact condition is not defined.
+
+This gates top-priority validation only.
+
+The resolved contract can represent an empty entry list under either final rule.
+
+### E — Rule ordering versus allocation-destination ordering
+
+This decision treats the two orderings as separate.
+
+Rule-vs-rule precedence and tie-breaking belong to M2.
+
+Residual-cent destination ordering belongs to M3 and uses Allocation Engine bucket state.
+
+No further decision is required unless a contrary specification interpretation appears.
+
+A contrary interpretation would require amending Decision 074.
+
+### F — Eligible-income computation ownership
+
+The specifications distinguish between the Rule Engine determining eligibility treatment and the Allocation Engine consuming an `eligibleAmount`, while also prohibiting the Rule Engine from performing final monetary calculations.
+
+The exact owner of eligible-income aggregation and double-count prevention remains unresolved.
+
+This gates eligible-income computation ownership.
+
+It does not change the `ResolvedRuleSet` contract because the contract names the selected basis rather than carrying the computed amount.
+
+## Future Review Trigger
+
+Reconsider this contract if:
+
+- a new rule category cannot be expressed by the existing unions
+- everyday spending acquires behavior distinct from lower-priority allocation
+- configurable leftover fallback becomes a product requirement
+- configurable recurring-bill underfunding behavior becomes a product requirement
+- a recurrence other than monthly is specified
+- a Rule Engine structured explanation-detail vocabulary is defined
+- multi-currency support changes the monetary shapes
+- a persisted resolved-contract field changes meaning
+
+Any incompatible persisted contract change requires a schema-version increment so existing Plan Snapshots continue to reproduce the rules under which they were created.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
@@ -3016,7 +4026,7 @@ The following topics are intentionally postponed until later specifications or v
 * Exact scoring weights
 * Exact Confidence Score formula
 * Exact allocation precedence algorithm
-* Exact API/interface names
+* Exact API/interface names, other than the Rule Engine `ResolvedRuleSet` output contract, which is fixed by Decision 074
 
 These should be resolved in the Engineering Architecture and engine specifications.
 
