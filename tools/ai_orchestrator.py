@@ -1,8 +1,11 @@
 import subprocess
 import sys
+from pathlib import Path
 
 
 MAX_REVIEW_ROUNDS = 3
+
+EXPECTED_BRANCH = "milestone-2-rule-engine"
 
 
 CLAUDE_ALLOWED_TOOLS = (
@@ -10,6 +13,8 @@ CLAUDE_ALLOWED_TOOLS = (
     "Bash(git status:*),"
     "Bash(git diff:*),"
     "Bash(git diff --stat:*),"
+    "Bash(git branch:*),"
+    "Bash(git log:*),"
     "Bash(npm test:*),"
     "Bash(npm run test:*),"
     "Bash(npm run lint:*),"
@@ -17,9 +22,10 @@ CLAUDE_ALLOWED_TOOLS = (
 )
 
 
-def run_command(command):
-    result = subprocess.run(
+def run_command(command, repo_path):
+    return subprocess.run(
         command,
+        cwd=repo_path,
         capture_output=True,
         text=True,
         shell=True,
@@ -27,11 +33,12 @@ def run_command(command):
         errors="replace",
     )
 
-    return result
 
-
-def git_status_short():
-    result = run_command("git status --short")
+def git_status_short(repo_path):
+    result = run_command(
+        "git status --short",
+        repo_path
+    )
 
     if result.returncode != 0:
         print("Could not read git status:")
@@ -41,7 +48,21 @@ def git_status_short():
     return result.stdout.strip()
 
 
-def run_claude(prompt):
+def git_current_branch(repo_path):
+    result = run_command(
+        "git branch --show-current",
+        repo_path
+    )
+
+    if result.returncode != 0:
+        print("Could not determine current branch:")
+        print(result.stderr)
+        sys.exit(1)
+
+    return result.stdout.strip()
+
+
+def run_claude(prompt, repo_path):
     print("\n========================================")
     print("CLAUDE")
     print("========================================")
@@ -53,6 +74,7 @@ def run_claude(prompt):
 
     result = subprocess.run(
         command,
+        cwd=repo_path,
         input=prompt,
         capture_output=True,
         text=True,
@@ -71,7 +93,7 @@ def run_claude(prompt):
     return result.stdout
 
 
-def run_codex_review(task):
+def run_codex_review(task, repo_path):
     print("\n========================================")
     print("CODEX REVIEW")
     print("========================================")
@@ -97,7 +119,7 @@ Only report a finding if it is:
 
 Ignore purely optional improvements.
 
-Conclude clearly with either:
+Conclude clearly with exactly one of:
 
 STATUS: APPROVED
 
@@ -107,7 +129,13 @@ STATUS: CHANGES_REQUESTED
 """
 
     result = subprocess.run(
-        ["codex", "review", "--uncommitted", review_instructions],
+        [
+            "codex",
+            "review",
+            "--uncommitted",
+            review_instructions,
+        ],
+        cwd=repo_path,
         capture_output=True,
         text=True,
         shell=True,
@@ -127,7 +155,7 @@ STATUS: CHANGES_REQUESTED
 
 def build_initial_claude_prompt(task):
     return f"""
-You are the implementation agent working in the current repository.
+You are the implementation agent working in the current PFOS repository.
 
 Complete ONLY the following task:
 
@@ -137,7 +165,7 @@ Complete ONLY the following task:
 
 Rules:
 
-- Read the relevant project specifications before editing.
+- Read CLAUDE.md and the relevant project specifications before editing.
 - Inspect the existing implementation before making changes.
 - Modify the repository directly.
 - Stay strictly within the requested scope.
@@ -147,8 +175,9 @@ Rules:
 - Do not reset or discard existing work.
 - Do not modify unrelated files.
 - Run the relevant tests using the tools available to you.
-- If a command is not allowed, report that accurately rather than claiming it ran.
+- If a command is unavailable, report that accurately.
 - Prefer the smallest correct implementation.
+- Do not begin the next milestone task.
 
 When finished, report:
 1. files changed
@@ -157,13 +186,15 @@ When finished, report:
 4. test results
 5. any unresolved issues
 
-Do not merely propose code. Make the changes in the repository.
+Do not merely propose code.
+Make the changes in the repository.
 """
 
 
 def build_revision_prompt(task, review):
     return f"""
-You are fixing your implementation after an independent review.
+You are fixing the CURRENT repository implementation after
+an independent review.
 
 Original task:
 
@@ -177,9 +208,8 @@ Reviewer findings:
 {review}
 --- END REVIEW ---
 
-Inspect the CURRENT repository state.
-
-Fix every valid reviewer finding that relates to the original task.
+Inspect the current repository state and fix every valid reviewer
+finding that relates to the original task.
 
 Rules:
 
@@ -190,8 +220,8 @@ Rules:
 - Do not change branches.
 - Do not reset the working tree.
 - Modify the repository directly.
-- Run the relevant tests after fixing the issues.
-- If reviewer feedback is merely optional or outside the task, do not implement it.
+- Run the relevant tests after fixing issues.
+- Ignore optional reviewer suggestions outside the task.
 
 When finished, report:
 1. files changed
@@ -206,15 +236,47 @@ def main():
     print("\nPFOS AI ORCHESTRATOR")
     print("========================================")
 
-    status = git_status_short()
+    if len(sys.argv) != 2:
+        print(
+            "Usage:\n"
+            "  python tools\\ai_orchestrator.py <PFOS_REPO_PATH>"
+        )
+        return
+
+    repo_path = Path(sys.argv[1]).resolve()
+
+    if not repo_path.exists():
+        print(f"\nSTOPPED: repository does not exist:")
+        print(repo_path)
+        return
+
+    if not (repo_path / ".git").exists():
+        print("\nSTOPPED: target does not appear to be a Git worktree.")
+        print(repo_path)
+        return
+
+    print(f"Target repository:")
+    print(repo_path)
+
+    branch = git_current_branch(repo_path)
+
+    if branch != EXPECTED_BRANCH:
+        print("\nSTOPPED: wrong branch.")
+        print(f"Expected: {EXPECTED_BRANCH}")
+        print(f"Actual:   {branch}")
+        return
+
+    print(f"✓ Correct branch: {branch}")
+
+    status = git_status_short(repo_path)
 
     if status:
-        print("\nSTOPPED: working tree is not clean.")
+        print("\nSTOPPED: target working tree is not clean.")
         print("\nCurrent changes:")
         print(status)
         print(
-            "\nCommit, stash, or remove these changes before "
-            "starting an automated task."
+            "\nCommit, stash, or remove these changes "
+            "before starting an automated task."
         )
         return
 
@@ -230,12 +292,15 @@ def main():
 
     claude_prompt = build_initial_claude_prompt(task)
 
-    claude_result = run_claude(claude_prompt)
+    claude_result = run_claude(
+        claude_prompt,
+        repo_path,
+    )
 
     if claude_result is None:
         return
 
-    status = git_status_short()
+    status = git_status_short(repo_path)
 
     if not status:
         print("\nSTOPPED: Claude made no repository changes.")
@@ -244,14 +309,19 @@ def main():
     print("\nRepository changes detected:")
     print(status)
 
-    for round_number in range(1, MAX_REVIEW_ROUNDS + 1):
-
+    for round_number in range(
+        1,
+        MAX_REVIEW_ROUNDS + 1
+    ):
         print(
             f"\n******** REVIEW ROUND "
             f"{round_number} ********"
         )
 
-        review = run_codex_review(task)
+        review = run_codex_review(
+            task,
+            repo_path,
+        )
 
         if review is None:
             return
@@ -260,13 +330,14 @@ def main():
             print("\n========================================")
             print("READY FOR HUMAN REVIEW")
             print("========================================")
+
             print(
                 f"Codex approved the implementation after "
                 f"{round_number} review round(s)."
             )
 
             print("\nFinal git status:")
-            print(git_status_short())
+            print(git_status_short(repo_path))
 
             print(
                 "\nNothing was committed or pushed."
@@ -276,7 +347,8 @@ def main():
 
         if "STATUS: CHANGES_REQUESTED" not in review:
             print(
-                "\nSTOPPED: Codex returned an unknown review status."
+                "\nSTOPPED: Codex returned an unknown "
+                "review status."
             )
             return
 
@@ -285,7 +357,8 @@ def main():
             print("STOPPED")
             print("========================================")
             print(
-                "Maximum review rounds reached without approval."
+                "Maximum review rounds reached "
+                "without approval."
             )
             return
 
@@ -299,7 +372,10 @@ def main():
             review,
         )
 
-        claude_result = run_claude(revision_prompt)
+        claude_result = run_claude(
+            revision_prompt,
+            repo_path,
+        )
 
         if claude_result is None:
             return
