@@ -81,6 +81,12 @@ describe('the shared registry', () => {
       expect(/^(MONEY|BASIS_POINTS|DATE)_/.test(code)).toBe(true);
     }
   });
+
+  it('names every key exactly as its value', () => {
+    for (const [key, value] of Object.entries(ERROR_CODES)) {
+      expect(value).toBe(key);
+    }
+  });
 });
 
 describe('the registries are disjoint', () => {

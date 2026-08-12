@@ -82,6 +82,27 @@ describe('each registry carries its own prefix', () => {
   });
 });
 
+/*
+ * Decision 073 requires that every registry key is identical to its value. A
+ * key that drifted from its value would let a call site name a code that no
+ * longer matches the string persisted inside a Plan Snapshot, so the invariant
+ * is checked rather than assumed. The error registry's equivalent case lives in
+ * src/test/architecture/error-code-registries.test.ts.
+ */
+describe('each registry names every key exactly as its value', () => {
+  it('names every explanation key exactly as its value', () => {
+    for (const [key, value] of Object.entries(RULE_EXPLANATION_CODES)) {
+      expect(value).toBe(key);
+    }
+  });
+
+  it('names every skip-reason key exactly as its value', () => {
+    for (const [key, value] of Object.entries(RULE_SKIP_REASON_CODES)) {
+      expect(value).toBe(key);
+    }
+  });
+});
+
 describe('the three registries are disjoint', () => {
   it('holds no duplicate across the combined Rule Engine set', () => {
     const combined = [...errorCodes, ...explanationCodes, ...skipReasonCodes];
