@@ -4123,6 +4123,115 @@ Reconsider the warning channel if Rule Engine warning codes are later moved into
 
 ---
 
+# Decision 076: Top-Priority Count and Rank Validation Codes
+
+**Status:** Accepted
+**Related:** Decisions 068, 071, 073, 074, 075
+**Scope:** Architecture, Engineering
+
+## Decision
+
+The Rule Engine registry gains two error codes, so that the top-priority validation already required by PFOS-ENG-01 §13.1 and §21.1 can be implemented:
+
+```text
+RULE_TOP_PRIORITY_COUNT_ABOVE_MAXIMUM
+RULE_TOP_PRIORITY_DUPLICATE_RANK
+```
+
+This decision names codes for behavior that is already accepted. It establishes no new validation rule, changes no financial semantics, and settles no question that Decision 075 left open.
+
+## Validated contract
+
+Validation operates on `ResolvedTopPriorityPlan`, the type in which Decision 075 already states the corresponding rules.
+
+That type carries everything these two checks require. `entries` supplies the count under either strategy, and `rank` on `ResolvedTopPriorityEntry` — inherited by `ResolvedTopPriorityShare` — supplies the value compared for duplication. Neither check reads any other field, and neither reads anything outside the plan.
+
+No authored `Rule` or `RuleVersion` contract is required, and none is introduced here.
+
+## Behavior
+
+Both rules apply under either strategy, because PFOS-ENG-01 §13.1 limits top priorities as such rather than limiting a particular strategy.
+
+A plan with more than three entries reports `RULE_TOP_PRIORITY_COUNT_ABOVE_MAXIMUM`.
+
+A plan in which two entries share a `rank` reports `RULE_TOP_PRIORITY_DUPLICATE_RANK`.
+
+Both are hard validation errors under PFOS-ENG-01 §21.1 and use the shared `VALIDATION` category. Decision 073 does not authorise a new category.
+
+## Independent validators
+
+Each rule may be implemented as its own bounded validator, for example:
+
+```ts
+export function validateTopPriorityCount(
+  plan: ResolvedTopPriorityPlan,
+): Result<void, RuleDomainError>;
+
+export function validateTopPriorityRanks(
+  plan: ResolvedTopPriorityPlan,
+): Result<void, RuleDomainError>;
+```
+
+A single combined validator is not required. The authored percentage-pool total validator established by Decision 071 remains separate from both.
+
+This decision therefore does not establish how simultaneous validation failures are aggregated, ordered, or reported together. Each validator answers one question about one plan. A composite validation contract, if one is ever needed, requires its own accepted decision.
+
+## Unchanged by this decision
+
+A `ResolvedTopPriorityPlan` with `strategy: 'SEQUENTIAL'` and zero entries remains valid under Decision 075. This decision introduces no error for that case, and neither rule can fire on an empty entry list. The warning Decision 075 requires for that case is neither named nor implemented here.
+
+A `ResolvedTopPriorityPlan` with `strategy: 'PERCENTAGE_SPLIT'` and zero entries remains a hard validation error reporting the existing `RULE_POOL_NOT_EXACTLY_100_PERCENT`. No second code is introduced for that case.
+
+The superseded zero-top-priorities bullet in PFOS-ENG-01 §13.1 stays superseded. This decision concerns only the two bullets Decision 075 left unchanged.
+
+No constraint on `rank` beyond duplicate detection is introduced. Ranks are not required to be positive, contiguous, to start at one, or to match array position. No accepted source requires any of those, and this decision adds none.
+
+Bucket status validation — inactive or archived buckets as active priorities — is not addressed. It requires bucket state that no current contract supplies.
+
+Blocker C and Blocker F remain open and continue to gate the work they name. This decision introduces no precedence behavior, no inheritance behavior, and no eligible-income behavior.
+
+## Why
+
+PFOS-ENG-01 §13.1 and §21.1 already make both conditions hard validation errors, and Decision 075 expressly preserved both bullets while recording that Milestone 2 may implement top-priority validation. The only thing preventing implementation is that no accepted document names the codes.
+
+Decision 073 introduces engine codes as the behavior they report becomes specified. That behavior is specified, so the codes belong in the registry now. Because a released code must not change meaning, the names are fixed by decision rather than chosen inside an implementation commit.
+
+The names place the subject before the condition, matching every existing code in every registry.
+
+The number three is deliberately absent from the code name. The V1 limit may change; the meaning "more than the allowed maximum" does not.
+
+## Alternatives Considered
+
+Reusing a single generic code for both conditions was rejected. The two failures call for different corrective actions, and PFOS-ENG-01 §39 requires errors to suggest corrective action where possible.
+
+Naming the codes `RULE_TOO_MANY_TOP_PRIORITIES` and `RULE_DUPLICATE_TOP_PRIORITY_RANK` was considered. Those mirror §21.1's phrasing and read more naturally, but every existing code places the subject before the condition, and consistency across a persisted vocabulary was judged more valuable.
+
+Requiring one combined top-priority validator was rejected. It would have forced this decision to settle how concurrent failures are ordered or aggregated, which is a broader contract question affecting every future validator and is not needed in order to name two codes.
+
+Deferring until the authored rule contracts exist was rejected. Decision 075 already authorises this work, and the validated type already exists.
+
+## Tradeoffs
+
+Validation operates on a resolved plan rather than on authored configuration. PFOS-ENG-01 §21 frames validation as occurring before activation, so an authored-time pass will be needed once the authored rule contracts are fixed. Decision 075 already states these rules in terms of `ResolvedTopPriorityPlan`, so this follows the accepted framing rather than inventing one.
+
+Independent validators mean a caller invokes more than one function to check a plan fully. That is accepted deliberately, in exchange for leaving aggregation unspecified until it is actually needed.
+
+## Consequences
+
+`RULE_ERROR_CODES` gains two entries and continues to satisfy the Decision 073 architecture tests: the `RULE_` prefix, key identical to value, neither reserved engine prefix, and disjointness from every other registry.
+
+Milestone 2 may implement the two checks as independent bounded validators over `ResolvedTopPriorityPlan`.
+
+The warning required by Decision 075 for a zero-entry `SEQUENTIAL` plan remains unimplementable until Rule Engine warning codes are settled.
+
+No existing contract, code, or registry value changes.
+
+## Future Review Trigger
+
+Reconsider if the V1 limit of three top priorities changes, if a composite or multi-error validation contract becomes necessary, if `rank` acquires constraints beyond uniqueness, or if Rule Engine warnings move into a typed engine-owned registry under the Decision 073 pattern.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
