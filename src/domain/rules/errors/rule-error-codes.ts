@@ -16,10 +16,11 @@
  *
  * This registry is deliberately minimal. It holds only the codes whose meaning
  * is already settled by an accepted decision — the two authored-percentage-pool
- * failures assigned to the Rule Engine by Decision 071 "Validation ownership".
- * The remaining hard-validation codes in PFOS-ENG-01 §21.1 arrive with the
- * milestone phase that implements the validation behind them, so that no code
- * is published before the rule it reports is specified.
+ * failures assigned to the Rule Engine by Decision 071 "Validation ownership",
+ * and the two top-priority failures named by Decision 076. The remaining
+ * hard-validation codes in PFOS-ENG-01 §21.1 arrive with the milestone phase
+ * that implements the validation behind them, so that no code is published
+ * before the rule it reports is specified.
  */
 export const RULE_ERROR_CODES = {
   /*
@@ -38,6 +39,25 @@ export const RULE_ERROR_CODES = {
    * requirement and is validated separately (§15.1).
    */
   RULE_POOL_ENTRY_OUT_OF_RANGE: 'RULE_POOL_ENTRY_OUT_OF_RANGE',
+
+  /*
+   * A top-priority plan must hold no more than the V1 maximum of three entries
+   * (Decision 076; PFOS-ENG-01 §13.1, §21.1). The limit applies under either
+   * strategy, because §13.1 limits top priorities as such rather than limiting a
+   * particular strategy.
+   *
+   * The number three is deliberately absent from the name: the V1 limit may
+   * change, the meaning "more than the allowed maximum" does not.
+   */
+  RULE_TOP_PRIORITY_COUNT_ABOVE_MAXIMUM: 'RULE_TOP_PRIORITY_COUNT_ABOVE_MAXIMUM',
+
+  /*
+   * Two top-priority entries must not share a rank (Decision 076;
+   * PFOS-ENG-01 §13.1, §21.1). Uniqueness is the only constraint on rank —
+   * ranks need not be positive, contiguous, start at one, or match array
+   * position, because no accepted source requires any of those.
+   */
+  RULE_TOP_PRIORITY_DUPLICATE_RANK: 'RULE_TOP_PRIORITY_DUPLICATE_RANK',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERROR_CODES)[keyof typeof RULE_ERROR_CODES];
