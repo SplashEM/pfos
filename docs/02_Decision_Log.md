@@ -4232,6 +4232,144 @@ Reconsider if the V1 limit of three top priorities changes, if a composite or mu
 
 ---
 
+# Decision 077: Rule Engine Warnings Use an Engine-Owned Code Registry
+
+**Status:** Accepted
+**Related:** Decisions 007, 023, 073, 074, 075, 076
+**Scope:** Architecture, Engineering
+
+## Decision
+
+The Rule Engine gains a fourth engine-owned closed code registry, for warnings, under the prefix `RULE_WARN_`. It contains one code:
+
+```text
+RULE_WARN_NO_TOP_PRIORITIES_CONFIGURED
+```
+
+## Ownership
+
+Decision 073 gives the shared layer the envelope and each engine its own vocabulary. Decision 074 applied that to explanations and skip reasons. Warnings are the one channel it has not reached, which is why `ResolvedRuleSet.warnings` is the only member of that contract whose code is untyped.
+
+The shared `DomainWarning` is unchanged. PFOS-ENG-00 §21 fixes its shape, it is already accepted, and this decision requires nothing from it:
+
+```ts
+export interface DomainWarning {
+  readonly code: string;
+  readonly message: string;
+  readonly affectedEntityIds: readonly string[];
+  readonly recommendedAction?: string;
+}
+```
+
+The Rule Engine narrows it locally instead:
+
+```ts
+export type RuleWarningCode = (typeof RULE_WARNING_CODES)[keyof typeof RULE_WARNING_CODES];
+
+export type RuleDomainWarning = DomainWarning & {
+  readonly code: RuleWarningCode;
+};
+```
+
+`RuleWarningCode` extends `string`, so the intersection narrows `code` and changes nothing else. A `RuleDomainWarning` remains assignable to `DomainWarning`, so it can be placed in `ResolvedRuleSet.warnings` without a cast.
+
+The dependency runs one way only: rules may read shared, and shared must never import a Rule Engine warning type.
+
+This decision does not require a construction helper. Whether typed construction is worth a small function is an implementation-design question, and if one is added its sole responsibility is typed construction.
+
+## Prefix
+
+The Rule Engine's four registries are:
+
+```text
+RULE_*          errors
+RULE_EXPLAIN_*  explanations
+RULE_SKIP_*     skip reasons
+RULE_WARN_*     warnings
+```
+
+`RULE_WARN_` follows the verb-stem abbreviation the existing prefixes use, while the registry constant is named `RULE_WARNING_CODES`, exactly as `RULE_EXPLAIN_*` lives inside `RULE_EXPLANATION_CODES`.
+
+## The Decision 075 warning
+
+A `ResolvedTopPriorityPlan` with `strategy: 'SEQUENTIAL'` and zero entries produces one warning carrying `RULE_WARN_NO_TOP_PRIORITIES_CONFIGURED`.
+
+`affectedEntityIds` is `[]`. The field is required by the shared contract and cannot be omitted, and a plan with no entries names no entity.
+
+`message` and `recommendedAction` are fixed literals with no interpolated value, so the warning is identical for every plan that produces it. No category or severity is introduced: `DomainWarning` has no such field, and `ExplanationSeverity` grades presentation on a different channel.
+
+Production belongs to a bounded producer over `ResolvedTopPriorityPlan`, returning zero or one warning. It is not a validator: Decision 075 makes this a valid resolution result rather than a failure, so it must not travel on the `Result` error channel.
+
+A non-empty `SEQUENTIAL` plan produces no warning. A zero-entry `PERCENTAGE_SPLIT` plan produces no warning either: Decision 075 keeps that case a hard validation error reporting `RULE_POOL_NOT_EXACTLY_100_PERCENT`, and its invalidity remains owned by percentage-pool validation.
+
+## One code only
+
+Decision 073 introduces a code when the behavior it reports is specified. Of the nine warnings PFOS-ENG-01 §21.2 lists as examples, none is producible in Milestone 2: they require projected amounts, bucket balances, goal state, precedence resolution, or authored contracts that do not exist. Several also overlap warnings PFOS-ENG-02 §62 already assigns to the Allocation Engine.
+
+No code is registered for any of them.
+
+## Unchanged by this decision
+
+The shared `DomainWarning` contract, in both shape and typing. It does not become generic.
+
+Runtime freezing. This decision establishes no immutability behavior for warning objects, no freeze depth, and no rule about omitting absent optional properties. Freezing depth and ownership is a separate unresolved architectural question and must not be partially settled here.
+
+`ResolvedRuleSet.warnings` remains `readonly DomainWarning[]`. Decision 074 typed `roundingPolicyId` as `string` so a historical snapshot could preserve an identifier that later changed; warning codes are persisted the same way. Narrowing the persisted field is deferred and requires its own decision.
+
+The order of `ResolvedRuleSet.warnings` is not established. PFOS-ENG-01 §26 requires ordering to be explicit and stable, and no accepted source states this array's order. With one producible warning the question does not yet arise, and it must not be settled inside an implementation commit.
+
+No deduplication contract and no aggregation contract are introduced. Each producer answers one question, as Decision 076 established for validators.
+
+The remaining §21.2 warning behaviors are untouched.
+
+Blocker C and Blocker F remain open. This decision introduces no precedence behavior and no eligible-income behavior.
+
+## Why
+
+Decision 075 requires a warning and Decision 076 records it as unimplementable because no accepted document names the code. That is the whole of the blockage, and it is the same shape Decision 076 resolved for the top-priority errors.
+
+Because a released code is persisted inside a Plan Snapshot and must not change meaning, the name is fixed by decision rather than chosen in an implementation commit.
+
+## Alternatives Considered
+
+Making shared `DomainWarning` generic over its code, as Decision 073 did for `DomainError`, was considered and rejected. It would be consistent with the error and explanation channels, but it changes an accepted shared contract to obtain a narrowing the Rule Engine can express locally. A local intersection achieves the same typing with no shared change, and the smaller decision is preferred.
+
+Leaving `code` as a bare string with no registry was rejected: the vocabulary would have no closure, and an unregistered placeholder warning code already sits in a test fixture, which is what that decay looks like.
+
+Placing warning codes in the shared registry was rejected: Decision 073 confines shared to the primitive families.
+
+Reusing `RULE_EXPLAIN_*` with `ExplanationSeverity: 'WARNING'` was rejected: both the explanation envelope and the explanation registry state that presentation severity does not replace the warning channel.
+
+`RULE_WARNING_` was considered and rejected in favour of `RULE_WARN_`, which matches the abbreviation the other prefixes use.
+
+`RULE_WARN_TOP_PRIORITIES_NONE_CONFIGURED` was considered. `RULE_WARN_NO_TOP_PRIORITIES_CONFIGURED` reads as natural English, matches the concept already written in the codebase, and stays inside the `RULE_WARN_` namespace.
+
+Registering the §21.2 examples now was rejected: none has a producer, and Decision 073 introduces codes with the behavior they report.
+
+## Tradeoffs
+
+A fourth registry adds a prefix to keep disjoint, enforced by architecture tests rather than the compiler.
+
+The warning channel narrows by intersection while the error and explanation channels narrow by type parameter. The two shapes differ, and the reason is recorded here: warnings arrived after their envelope was accepted, and matching the older pattern was not worth editing an accepted shared contract.
+
+Typing producers while leaving the persisted field wide means the closed union is not enforced at the `ResolvedRuleSet` boundary. That is accepted in exchange for historical snapshots that survive a retired code.
+
+## Consequences
+
+Architecture tests extend to four registries: prefix, key identical to value, and disjointness across shared `ERROR_CODES`, `RULE_ERROR_CODES`, `RULE_EXPLANATION_CODES`, `RULE_SKIP_REASON_CODES` and `RULE_WARNING_CODES`. `RULE_WARN_` joins the reserved non-error Rule prefixes, so a warning code placed in the error registry fails the build.
+
+Milestone 2 may implement the Decision 075 warning producer.
+
+The placeholder code in the `ResolvedRuleSet` test fixture is replaced with the registered code.
+
+No shared contract, existing registry value, or `ResolvedRuleSet` field changes.
+
+## Future Review Trigger
+
+Reconsider when a second warning producer exists, since warning-array ordering must then be settled; if runtime freezing depth and ownership is resolved, since a construction helper may then acquire an immutability responsibility; if warning codes acquire a category or severity; if a persisted warning code is ever retired; or if a §21.2 warning currently owned by the Allocation Engine is reassigned.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
