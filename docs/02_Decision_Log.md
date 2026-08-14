@@ -4686,6 +4686,276 @@ Reconsider if the authored `Rule` contract introduces a lifecycle or status that
 
 ---
 
+# Decision 080: Additive Versus Replacing Rule Semantics and Precedence Resolution
+
+**Status:** Accepted
+**Related:** Decisions 010, 014, 015, 016, 017, 020, 021, 022, 025, 028, 068, 071, 073, 074, 075, 076, 077, 078, 079
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+Rule precedence resolves per **resolved settings slot**. A slot is one addressable destination in the `ResolvedRuleSet` fixed by Decision 074, keyed by `bucketId` where that contract keys it.
+
+Every V1 slot is **replacing** except `globalObligations`, which is **additive**.
+
+This is the classification Decision 074 named as Blocker C. It settles semantics. It does not close every question Blocker C touches, and it unlocks very little implementation; both limits are recorded below.
+
+## The slot is the unit
+
+Decision 074 already fixed the granularity, and this decision invents none.
+
+Inheritance is therefore neither per leaf field nor whole-rule. A configuration the accepted contract expresses as a discriminated union resolves whole: a `RolloverPolicyConfig` cap cannot be inherited from a group while its `policyType` comes from the bucket, and PFOS-ENG-01 §8.4's example carries policy and cap together. Equally, a bucket rule that supplies a funding rule does not displace that bucket's inherited group rollover default, because §9's inheritance allow-list is written per setting.
+
+## Which hierarchy levels compete
+
+Only PFOS-ENG-01 §6 levels 5 through 9 — income source, bucket, group default, global user rule, product default — are slot-level competitors in V1.
+
+Level 1 is not a competitor: §7 makes a user rule conflicting with a system invariant a validation failure, so an invariant gates activation rather than winning a slot.
+
+Level 2 is not a competitor: Decision 074 stores the complete `ResolvedRuleSet` by value in a Plan Snapshot, so historical evaluation replays a resolved answer rather than re-resolving slot by slot.
+
+Levels 3 and 4 are out of scope. Decision 074 treats simulation and event-level overrides as inputs to resolution and keeps event overrides out of `ResolvedRuleSet` entirely. Neither override contract exists, and neither is established here.
+
+## Precedence between different levels
+
+Among levels 5 through 9, a lower-numbered level has higher precedence, as §6 states.
+
+Where a replacing slot is addressed at two **different** levels, the rule at the higher-precedence level survives and the other is displaced. That outcome is determinate, and no identifier, array position, creation timestamp or repository order is consulted. PFOS-ENG-00 §14 keeps identifiers opaque, §32 Invariant 11 forbids repository order from changing a result, and Decisions 078 and 079 forbid an identifier tie-breaker.
+
+## Replacing semantics
+
+For a replacing slot addressed at distinct levels, exactly one rule survives: the one at the highest-precedence level.
+
+This is PFOS-ENG-01 §43.2's accepted worked test — product default carry-all, global carry-all, group carry-to-$500, bucket reset, resolved reset — and §43.6's property that lower-precedence replacement rules never override higher-precedence rules. §15 states it directly for funding: every allocatable bucket uses one supported funding rule.
+
+Replacing slots and their governing sources:
+
+- `allocationBasis` — single-valued
+- `topPriorities.strategy`, and per-bucket rank and membership — §13, Decision 074
+- `requiredFundingRules[bucketId]` — §15
+- `lowerPriorityPool.strategy`, and per-bucket destination membership — §14, Decision 014
+- `leftoverPolicy` — §16, §8.5, Decision 020
+- `rolloverPolicies[bucketId]` — §17, §10.1, §43.2, Decision 028
+- `goalPolicies[bucketId]` — §5.7, Decisions 025, 026, 027
+
+A keyed collection is not additive. `rolloverPolicies` holds many entries because it is keyed by bucket; per bucket, one survives.
+
+`sequence` is not additivity either. `ResolvedFundingRule.sequence` orders distinct buckets competing for the same money; execution order is not two rules surviving in one slot.
+
+`stageSequence` is not rule-authored. No §5 category authors a stage order, and Decision 074 assigns the sequence to the Rule Engine as engine output.
+
+## Same-level contention is not determined by this decision
+
+§6 orders hierarchy levels. It does not define contention between two replacing rules at the same level, and no other accepted source does.
+
+The constraint, which holds under every possible future answer: no tie-break between same-level replacing rules may use an identifier, array position, a timestamp, creation order, repository order, or storage order. Decision 079 rejected a `createdAt` tie-break for version selection on reasoning that applies here unchanged.
+
+This decision does **not** determine whether such a state is:
+
+- structurally impossible under the future authored `Rule` contract,
+- an authoring or activation validation failure, or
+- a resolver error.
+
+That determination is deferred until the authored `Rule` contract defines how a rule addresses a slot and whether more than one same-level rule can address one replacing slot. Choosing among the three now would require assuming an answer to that contract, which Decisions 078 and 079 deliberately left open.
+
+No error code is registered for this condition. Registering one would presuppose the third answer. `RULE_ERROR_CODES` is unchanged by this decision.
+
+**The replacing-semantics rule above is therefore stated for distinct levels only.** It is not a total selection procedure over an arbitrary candidate collection, and no such procedure may be implemented against this decision. A financial resolution must not contain a reachable case whose behavior is deliberately unspecified.
+
+## Additive semantics
+
+`globalObligations` is the only additive slot in V1.
+
+Separately authored global obligations accumulate. Each takes effect and none displaces another. Decision 074 already requires this: separately authored obligations remain independent and are not collapsed into one N-way percentage split.
+
+Accumulation is within the global level. No other §6 level authors a global obligation in V1.
+
+An additive obligation cannot be replaced by a rule at any level. PFOS-ENG-01 §10.2 states it: the bonus source's route does not replace the global tithe. Decision 016 says the same — eligible income is combined globally, and income-source overrides apply after global rules are resolved.
+
+Exactly one thing removes an additive obligation: an explicit eligibility or exclusion determination, which removes it as a **skip** reporting `RULE_SKIP_INCOME_SOURCE_EXCLUDED`, not as an override. §10.2's own qualifier — "unless the income source is explicitly excluded from eligible income" — and §12.5's exclusion list are the authority. Who computes eligible income, and how double counting is prevented, is Blocker F and is untouched here.
+
+## Ordered materialization of the additive slot is blocked
+
+`ResolvedGlobalObligation.sequence` is declared financially meaningful by Decision 074, and no accepted source supplies its value or the key that produces it. It must not come from an identifier, array position, or repository order.
+
+This decision supplies neither. It classifies the slot; it does not enable the slot to be built.
+
+`ResolvedRuleSet.globalObligations` therefore cannot be materialized under this decision alone — not for two or more obligations, and not for one, since a single obligation's `sequence` value has no accepted source either. Preserving input or repository order as financial order is excluded, and emitting a collection whose ordering is not financially established would defeat the determinism Constitution Principle 18 and §26 require.
+
+The equivalent gap for `ResolvedFundingRule.sequence` predates this decision and is likewise untouched.
+
+## Inheritance
+
+Inheritance is the continuation of the same downward walk, taken only along the channels PFOS-ENG-01 §9 supports: income source from global, bucket from group default, and bucket from product default where neither group nor bucket defines a rule. §9's negative rule stands: nothing inherits merely because objects share a name or a category.
+
+An income-source override replaces only the slots it addresses. It does not replace the global plan. If it did, §10.2's bonus rule would displace the global tithe, and §10.2 says it does not. Decision 017, PRD §12 and §24.4's worked example supply the default position: an income source inherits the global plan where no source override exists.
+
+A bucket rule replaces a group default for that slot whole, and the group contributes nothing further to it. §5.4 and §8.4 supply this.
+
+## Product-default fallback, where an accepted product default exists
+
+Where no rule at levels 5 through 8 addresses a slot, the product default supplies the value. §8.1 defines it as the fallback used when the user has not made a choice, §9 states buckets inherit product defaults, and §43.2 exercises the full chain. Constitution Principle 2 makes the named defaults a product commitment.
+
+This applies only to a slot for which an accepted product default exists.
+
+Established by an accepted source:
+
+- `rolloverPolicies[bucketId]` — `CARRY_ALL` (§17.1, Decision 028)
+- `lowerPriorityPool.strategy` — even split (§14.1, Decision 014)
+- `topPriorities.strategy` — `SEQUENTIAL` (§13.2), with an empty entry list valid under Decision 075
+
+Not established by any accepted source:
+
+- `leftoverPolicy` — Decision 020 makes it user-defined and names no default. §16.2 lists `Leave unallocated` among the supported types but does not designate it the product default. Decision 074's "no V1 leftover fallback" addresses a destination that cannot receive a remainder, which is a different question.
+- `allocationBasis` — no accepted source names a default basis. This is also adjacent to Blocker F and is not settled here.
+- `requiredFundingRules[bucketId]` — §15 requires each allocatable bucket to use one funding rule but names no default rule for a bucket that authors none.
+- `goalPolicies[bucketId]` — Decisions 025, 026, 027 and §15.5 supply defaults for individual fields, but no accepted source assembles them into a default for the whole four-field slot, and whether a bucket without a goal rule receives an entry at all is a population question this decision does not settle.
+
+`leftoverPolicy` and `allocationBasis` are non-optional fields of `ResolvedRuleSet`. A resolution in which no user rule addresses either slot therefore has no established value, and the contract cannot be satisfied. This decision records that as a discovered gap. It does not invent a default to close it, because a product default is a product commitment under Constitution Principle 2 and belongs in an accepted decision rather than in a resolver.
+
+## Zero effective versions
+
+Decisions 078 and 079 state that a rule with no version effective on the evaluation date contributes nothing for that date, and both explicitly left open what happens next.
+
+Such a rule **contributes no candidate to the slot**, and resolution continues through the applicable chain to the next level that addresses it. Absence does not suppress fallback.
+
+Three grounds. §8.1's product default is used where the user has not made a choice, and under Decision 022's prospectivity a rule whose versions are not effective on the evaluation date is not a choice for that date. Suppression would leave a slot unfilled while Decision 074 forbids the Allocation Engine from re-resolving, so the resolved set could not be executed. And Constitution Principle 4 forbids making an important financial decision silently, including by silently making it nothing.
+
+A rule that contributes no candidate overrides nothing. It produces no `RULE_EXPLAIN_RULE_OVERRIDDEN` against a lower level, and the surviving value is an ordinary applied or inherited outcome.
+
+Version selection is unchanged. It remains intra-rule, by latest `effectiveFrom` under Decision 079, and completes before any inter-rule resolution begins.
+
+## Explanation production
+
+This decision registers no explanation code and redefines none. It records which outcomes gain producers within the vocabulary Decision 074 already accepted.
+
+Producers established by this decision:
+
+`RULE_EXPLAIN_RULE_APPLIED` — Decision 074: "records a selected rule." The surviving value comes from a rule addressing the slot at the highest level in that slot's applicable chain: level 5 for plan-level slots, level 6 for bucket-keyed slots. Also the producer for a **single** surviving global obligation.
+
+`RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` — Decision 074: "records an additive rule that survives **alongside another applicable rule**." Produced for each surviving obligation where **two or more** obligations survive simultaneously in the additive slot.
+
+"Another applicable rule" means another applicable rule participating in that same additive slot. Decision 074 ties this code's producer specifically to additive-versus-replacing behavior — it states the code "has no producer until additive-versus-replacing behavior is fully classified" — so the rule it survives alongside is one it was classified against, which is a rule in the same slot. A consequence, not a justification: the alternative reading would fire the code on almost every resolution, since a global obligation ordinarily co-occurs with unrelated bucket and leftover rules.
+
+This leaves the code without a producer in the ordinary single-obligation V1 configuration. That is accepted. Decision 074's wording governs, and the existence of a producer is not a reason to widen a code.
+
+The two additive producers are mutually exclusive by construction, so no multiplicity question arises between them.
+
+`RULE_EXPLAIN_RULE_OVERRIDDEN` — Decision 074: "records a lower-precedence rule replaced by a higher-precedence rule." Produced for a replacing rule displaced by a rule at a higher-precedence level. Never produced for a version that lost intra-rule selection, which Decision 079 forbids, and never for a rule that contributed no candidate.
+
+`RULE_EXPLAIN_DEFAULT_INHERITED` — Decision 074: "records inheritance of an applicable default where no replacing override exists." Produced where the surviving value reaches the slot from a level below the highest level in that slot's chain: a group default (§5.4, §8.3, §9), an inherited global default (§5.1's "Default …" settings; §8.4's "applicable global or group defaults"; §24.4's "inherited the global allocation plan"), or the product default (§8.1, §9, §43.2).
+
+`RULE_EXPLAIN_RESOLUTION_CONTEXT` — no producer established here; it depends on the evaluation-context contract.
+
+## Explanation multiplicity is not determined by this decision
+
+Decision 074's glosses are not mutually exclusive, and two pairs overlap on a single outcome:
+
+- a rule displaced by higher precedence satisfies both `RULE_EXPLAIN_RULE_OVERRIDDEN` ("a lower-precedence rule replaced by a higher-precedence rule") and `RULE_EXPLAIN_RULE_SKIPPED` ("records a skipped rule and pairs with the machine-readable `RULE_SKIP_*` reason"), since that rule is skipped and carries a `RULE_SKIP_*` reason;
+- a slot filled by inheritance satisfies both `RULE_EXPLAIN_RULE_APPLIED` ("records a selected rule") and `RULE_EXPLAIN_DEFAULT_INHERITED`, since the inherited rule was selected.
+
+Whether one outcome may carry more than one explanation record, and if not which code prevails, is an explanation-production convention. No accepted source forces an answer, and Blocker C does not require one: the classification, the precedence semantics and the producers above are unaffected by it.
+
+It is therefore deferred, and this decision establishes no suppression, no deduplication, no explanation-code precedence, and no one-record-per-outcome behavior.
+
+## Skip production
+
+A rule displaced by a higher-precedence rule in a replacing slot is represented by a `SkippedRule` reporting `RULE_SKIP_SUPERSEDED_BY_HIGHER_PRECEDENCE`.
+
+Decision 074 registers this literal and gives it no individual gloss; its meaning rests on its name, on §6, and on §24.2's requirement to report which lower-precedence rules were overridden. Decision 074's exclusions confirm what it is not: neither an allocation-time condition nor an activation-blocking validation error. This decision names its producer and does not purport to define the code.
+
+Producing it does not presume the still-unsettled evaluation-context population: to know that a rule was displaced, the resolver necessarily held it.
+
+Whether that same displaced rule additionally carries `RULE_EXPLAIN_RULE_SKIPPED` is the deferred multiplicity question above and is not settled here.
+
+No skip code is registered and none is redefined.
+
+## Deliberately deferred
+
+- **Same-level replacing contention**, and whether it is structurally impossible, an authoring or activation validation failure, or a resolver error.
+- **Explanation multiplicity and deduplication** across the two overlapping code pairs above.
+- **The ordering source for `ResolvedGlobalObligation.sequence`**, and therefore ordered materialization of the additive slot; and the pre-existing equivalent for `ResolvedFundingRule.sequence`.
+- **Product defaults for `leftoverPolicy`, `allocationBasis`, `requiredFundingRules` and the whole `goalPolicies` slot.**
+- The projection from an authored rule to a §6 level and a slot. That requires `Rule.ownerType`, `ownerId`, `ruleCategory` and `ruleType` or an equivalent, which Decisions 078 and 079 deliberately left alone and which this decision does not define or invent.
+- Which rules the evaluation context supplies (§25), and therefore production of `RULE_SKIP_NOT_EFFECTIVE_ON_EVALUATION_DATE`.
+- Blocker F: eligible-income computation ownership and double-count prevention.
+- The full `RuleVersion` payload and the authored `Rule` contract.
+- Simulation-override and event-level-override contracts, §6 levels 3 and 4.
+- Plan Snapshot design, persistence schema, canonicalization equal-sequence tie-break, runtime freeze depth and ownership, warning-array ordering, and cycle product and ownership semantics.
+- All Milestone 3 allocation behavior.
+
+## Why
+
+Decision 074 named Blocker C as gating precedence resolution, resolver behavior and the production of `RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY`, and recorded that the approved contract can represent either result. Decisions 078 and 079 then resolved version selection completely while stating in terms that what happens after a rule contributes nothing is Blocker C.
+
+The classification is decidable over already-accepted types. §6 makes replacing the rule and additive the stated exception; §10's two worked examples are one of each; and Decision 074's contract already discriminates them — resolved rollover, goal and funding entries each carry a singular `ruleVersionId`, while separately authored obligations are declared independent and uncollapsed.
+
+Classifying the resolved slots rather than the §5 categories keeps the policy small and stable. §5.1 feeds both the additive obligation slot and several replacing default slots, so no §5 category is uniformly one kind. The slots are fixed by an accepted decision and persisted inside a Plan Snapshot; the §5 category vocabulary is not fixed by any decision.
+
+Deferring same-level contention, explanation multiplicity, additive ordering and the missing product defaults keeps this decision to what the accepted corpus supports. Each requires either the authored `Rule` contract, a product commitment no accepted source has made, or a convention Blocker C does not need.
+
+## Alternatives Considered
+
+Classifying the §5 categories directly was rejected: §5.1 is not uniformly one kind, so a category label would be wrong for one of its slots or would require sub-categories no accepted source defines.
+
+Treating every slot as replacing was rejected: it requires collapsing separately authored obligations, which Decision 074 forbids.
+
+Additive-by-default with a listed set of replacing rules was rejected: it inverts §6's governing sentence.
+
+Suppressing fallback when a rule has zero effective versions was rejected on the three grounds recorded above.
+
+Emitting `RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` for every rule in the additive slot regardless of how many survive was considered and rejected. It would give the code a producer in the ordinary single-obligation configuration, but Decision 074's accepted wording is "survives alongside another applicable rule," and a lone obligation survives alongside no rule it was classified against. Ensuring a code has a producer is not a reason to widen its accepted meaning.
+
+Establishing that the more specific explanation code suppresses the more general one was considered and rejected. Both glosses fit their overlapping outcomes, Blocker C does not need the question answered, and settling it here would create a convention no accepted source supports.
+
+Registering an error code for same-level contention was rejected: it presupposes that the condition is a resolver error rather than structurally impossible or an authoring failure, which the authored `Rule` contract has not determined. A released code must not change meaning, so naming one before its condition is characterised is the same mistake in a different place.
+
+Designating `LEAVE_UNALLOCATED` the product default for `leftoverPolicy` was rejected: no accepted source designates it, and a product default is a product commitment under Constitution Principle 2.
+
+Per-leaf-field inheritance was rejected: a discriminated-union configuration cannot be assembled from two levels. Whole-rule inheritance was rejected: §9's allow-list is written per setting.
+
+## Consequences
+
+### Semantics now settled
+
+- Additive versus replacing classification, per resolved settings slot.
+- `globalObligations` is the sole V1 additive slot; every other slot is replacing.
+- Precedence between **different** §6 levels 5 through 9, lower-numbered first.
+- Per-slot inheritance along §9's channels.
+- A rule with zero effective versions contributes no candidate, and resolution continues.
+- Product-default fallback for the three slots that have an accepted product default.
+- The explanation and skip producers listed above.
+
+### Implementation now possible
+
+Only a unit whose behavior is defined for every input its contract admits qualifies.
+
+- A `RulePrecedenceLevel` vocabulary expressing §6's levels, with the V1 slot-competitor subset (5 through 9) and the exclusion of levels 1 through 4 documented, and tests establishing the §6 ordering.
+
+Nothing else. In particular, no selection procedure over a candidate collection may be implemented, because such a collection can contain two candidates at one level and this decision does not say what then happens.
+
+### Implementation still blocked
+
+- Any replacing-slot winner selection over an arbitrary candidate collection, until same-level contention has an accepted outcome or an accepted input contract makes that state unrepresentable.
+- Additive materialization of `globalObligations`, on the `sequence` source.
+- The whole `ResolvedRuleSet` resolver.
+- The authored-rule-to-level-and-slot projection.
+- Any slot whose product default is missing.
+- Blocker F.
+- Every evaluation-context-dependent producer.
+
+### Registries and contracts
+
+No code registry changes. `RULE_ERROR_CODES`, `RULE_EXPLANATION_CODES` and `RULE_SKIP_REASON_CODES` are unchanged, and no `ResolvedRuleSet` field changes.
+
+Blocker F remains open. Blockers D and E are already closed by Decision 075 and by Decision 074 respectively.
+
+## Future Review Trigger
+
+Reconsider when the authored `Rule` contract is accepted, since the level and slot projection and the characterisation of same-level contention both become determinable and a replacing-slot selector then becomes implementable; when an additive ordering source is accepted, since `globalObligations` then becomes materializable; when a product default is accepted for `leftoverPolicy` or `allocationBasis`; when an explanation multiplicity convention is accepted; if a simulation or event-level override contract is accepted, since §6 levels 3 and 4 would then need slot semantics; if a new `ResolvedRuleSet` slot is introduced, since it must be classified at contract time; or if a rule category is found to require a second additive slot.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
