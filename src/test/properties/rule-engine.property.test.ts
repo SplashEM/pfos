@@ -12,8 +12,13 @@ import {
 } from '@domain/rules/contracts/rule-effective-period';
 import { RULE_WARNING_CODES } from '@domain/rules/contracts/rule-warning-codes';
 import { RULE_ERROR_CODES } from '@domain/rules/errors/rule-error-codes';
+import { selectRuleVersionEffectiveOn } from '@domain/rules/services/rule-version-selection';
 import { validateAuthoredPoolTotal } from '@domain/rules/validation/authored-percentage-pool';
 import { validateRuleEffectivePeriod } from '@domain/rules/validation/rule-effective-period';
+import {
+  validateDistinctRuleVersionEffectiveStarts,
+  type RuleVersionEffectivePeriodLike,
+} from '@domain/rules/validation/rule-version-effective-starts';
 import { validateTopPriorityCount } from '@domain/rules/validation/top-priority-count';
 import { validateTopPriorityRanks } from '@domain/rules/validation/top-priority-ranks';
 import { produceTopPriorityWarnings } from '@domain/rules/warnings/top-priority-warnings';
@@ -32,9 +37,9 @@ import {
  *
  * PFOS-ENG-01 §26 requires that resolution never depend on object iteration
  * order or on random identifiers, and §43.4 asks that repeated and reordered
- * input produce identical output. The six functions exercised below are the
+ * input produce identical output. The eight functions exercised below are the
  * only Rule Engine behavior accepted so far (Decisions 071, 075, 076, 077,
- * 078), so they are the only place those requirements can be tested today.
+ * 078, 079), so they are the only place those requirements can be tested today.
  *
  * Example-based coverage already sits beside each function and is not repeated
  * here. This file adds only what an example cannot state: that the
@@ -545,5 +550,602 @@ describe('validateRuleEffectivePeriod properties', () => {
         );
       }),
     );
+  });
+});
+
+/**
+ * Decision 079 keeps two questions apart, and the generators below keep them
+ * apart as well: whether a version history is well formed, and which version
+ * answers on one date. Histories are therefore built two ways — starts distinct
+ * by construction, and starts that deliberately collide — so both sides are
+ * exercised without a filter discarding most of what is generated.
+ */
+
+/** The index arithmetic below assumes an ascending pool; a guard test pins it. */
+const POOL_LAST_INDEX = DATE_POOL.length - 1;
+
+/** Mirrors DATE_POOL[0]. Never reached: it only keeps `pooled` total. */
+const POOL_FALLBACK: FinancialDate = date(2024, 2, 29);
+
+/** Total indexed access into the pool, since the indices are generated. */
+function pooled(index: number): FinancialDate {
+  return DATE_POOL[index % DATE_POOL.length] ?? POOL_FALLBACK;
+}
+
+const FIRST_FAR_FUTURE: FinancialDate = date(2031, 1, 1);
+
+/**
+ * Dates after everything else these tests generate, pooled or wide. A version
+ * starting on one is certainly not in effect on any generated evaluation date,
+ * and certainly collides with no other start.
+ */
+const FAR_FUTURE: readonly FinancialDate[] = [
+  FIRST_FAR_FUTURE,
+  date(2035, 6, 15),
+  date(2099, 12, 31),
+];
+
+function farFuture(index: number): FinancialDate {
+  return FAR_FUTURE[index % FAR_FUTURE.length] ?? FIRST_FAR_FUTURE;
+}
+
+function versionOf(
+  index: number,
+  effectiveFrom: FinancialDate,
+  effectiveTo?: FinancialDate,
+): RuleVersionEffectivePeriodLike {
+  return {
+    ruleVersionId: asEntityId(`rule-version-${String(index)}`),
+    period: effectiveTo === undefined ? { effectiveFrom } : { effectiveFrom, effectiveTo },
+  };
+}
+
+/** Whether a version ends, and where, expressed so an end can never precede its start. */
+interface EndSeed {
+  readonly openEnded: boolean;
+  readonly endIndex: number;
+}
+
+const endSeedArbitrary: fc.Arbitrary<EndSeed> = fc.record({
+  openEnded: fc.boolean(),
+  endIndex: fc.integer({ min: 0, max: POOL_LAST_INDEX }),
+});
+
+const DEFAULT_END_SEED: EndSeed = { openEnded: true, endIndex: 0 };
+
+/**
+ * An end drawn from the pool, raised to the start when the draw precedes it.
+ * Folding rather than filtering keeps every draw usable and makes one-day
+ * periods common, which is where the inclusive end boundary is decided.
+ */
+function endFor(start: FinancialDate, seed: EndSeed): FinancialDate | undefined {
+  if (seed.openEnded) {
+    return undefined;
+  }
+
+  const drawn = pooled(seed.endIndex);
+  return ordinal(drawn) >= ordinal(start) ? drawn : start;
+}
+
+const MAX_HISTORY = 5;
+
+/** Any history at all. Starts may repeat, which is what the validator property needs. */
+const historyArbitrary: fc.Arbitrary<readonly RuleVersionEffectivePeriodLike[]> = fc
+  .array(fc.tuple(fc.integer({ min: 0, max: POOL_LAST_INDEX }), endSeedArbitrary), {
+    maxLength: MAX_HISTORY,
+  })
+  .map((entries) =>
+    entries.map(([startIndex, seed], index) => {
+      const start = pooled(startIndex);
+      return versionOf(index, start, endFor(start, seed));
+    }),
+  );
+
+/**
+ * A history whose starts are distinct by construction. A shuffled subarray
+ * draws each pooled date at most once, so no filter is needed and no run is
+ * discarded.
+ */
+const distinctStartHistoryArbitrary: fc.Arbitrary<readonly RuleVersionEffectivePeriodLike[]> = fc
+  .tuple(
+    fc.shuffledSubarray([...DATE_POOL], { minLength: 0, maxLength: MAX_HISTORY }),
+    fc.array(endSeedArbitrary, { minLength: MAX_HISTORY, maxLength: MAX_HISTORY }),
+  )
+  .map(([starts, seeds]) =>
+    starts.map((start, index) =>
+      versionOf(index, start, endFor(start, seeds[index] ?? DEFAULT_END_SEED)),
+    ),
+  );
+
+/** The same objects in a different arrangement. */
+function permutationsOf<T>(items: readonly T[]): fc.Arbitrary<readonly T[]> {
+  return fc.shuffledSubarray([...items], { minLength: items.length, maxLength: items.length });
+}
+
+/**
+ * Identifiers replaced, periods untouched. The numbering is reversed so the
+ * lexical order of the labels no longer follows the array order, which is what
+ * an implementation leaning on either would trip over.
+ */
+function relabelled(
+  history: readonly RuleVersionEffectivePeriodLike[],
+): readonly RuleVersionEffectivePeriodLike[] {
+  return history.map((version, index) => ({
+    ruleVersionId: asEntityId(`relabelled-${String(MAX_HISTORY - index)}`),
+    period: version.period,
+  }));
+}
+
+/** A history paired with the date it is to be read on. */
+interface DatedHistory {
+  readonly versions: readonly RuleVersionEffectivePeriodLike[];
+  readonly evaluationDate: FinancialDate;
+}
+
+/**
+ * A history in which two or more versions in effect on the evaluation date
+ * share the greatest start.
+ *
+ * Built by construction rather than filtered: the tied start is folded to an
+ * index at or below the evaluation date, every tied version is open-ended so it
+ * is certainly in effect, and no extra version is ever placed between the tie
+ * and the evaluation date — which is the only thing that could displace it.
+ */
+const tiedHistoryArbitrary: fc.Arbitrary<DatedHistory> = fc
+  .tuple(
+    fc.integer({ min: 0, max: POOL_LAST_INDEX }),
+    fc.integer({ min: 0, max: POOL_LAST_INDEX }),
+    fc.integer({ min: 2, max: 3 }),
+    fc.array(fc.boolean(), { maxLength: 2 }),
+  )
+  .map(([evaluationIndex, tieSeed, tieCount, extras]) => {
+    const tieIndex = tieSeed % (evaluationIndex + 1);
+    const tieStart = pooled(tieIndex);
+    const versions: RuleVersionEffectivePeriodLike[] = [];
+
+    for (let tie = 0; tie < tieCount; tie += 1) {
+      versions.push(versionOf(tie, tieStart));
+    }
+
+    extras.forEach((earlier, extra) => {
+      versions.push(
+        earlier && tieIndex > 0
+          ? versionOf(10 + extra, pooled(tieIndex - 1))
+          : versionOf(20 + extra, farFuture(extra)),
+      );
+    });
+
+    return { versions, evaluationDate: pooled(evaluationIndex) };
+  });
+
+/**
+ * A malformed history whose duplicate sits below a unique later start: two or
+ * more versions share an earlier start, one version starts strictly later, and
+ * every one of them is in effect on the evaluation date.
+ *
+ * Decision 079 expects selection to answer with the later one while the history
+ * itself stays invalid, which is the distinction the paired properties below
+ * make explicit.
+ */
+const lesserDuplicateHistoryArbitrary: fc.Arbitrary<DatedHistory> = fc
+  .tuple(
+    fc.integer({ min: 1, max: POOL_LAST_INDEX }),
+    fc.integer({ min: 0, max: POOL_LAST_INDEX }),
+    fc.integer({ min: 0, max: POOL_LAST_INDEX }),
+    fc.integer({ min: 2, max: 3 }),
+  )
+  .map(([evaluationIndex, winnerSeed, duplicateSeed, duplicateCount]) => {
+    const winnerIndex = 1 + (winnerSeed % evaluationIndex);
+    const duplicateIndex = duplicateSeed % winnerIndex;
+    const versions: RuleVersionEffectivePeriodLike[] = [versionOf(0, pooled(winnerIndex))];
+
+    for (let duplicate = 0; duplicate < duplicateCount; duplicate += 1) {
+      versions.push(versionOf(1 + duplicate, pooled(duplicateIndex)));
+    }
+
+    return { versions, evaluationDate: pooled(evaluationIndex) };
+  });
+
+/** The greatest start among the supplied versions, computed by the ordinal oracle. */
+function greatestStart(versions: readonly RuleVersionEffectivePeriodLike[]): number {
+  return versions.reduce(
+    (running, version) => Math.max(running, ordinal(version.period.effectiveFrom)),
+    Number.NEGATIVE_INFINITY,
+  );
+}
+
+describe('validateDistinctRuleVersionEffectiveStarts properties', () => {
+  /*
+   * Decision 079: a duplicate start is the one rejected shape, and it is
+   * rejected regardless of the evaluation date. Distinctness is recomputed here
+   * from the ordinal oracle rather than from compareFinancialDates, so the
+   * property does not restate the code it checks.
+   */
+  it('accepts a history exactly when its starts are pairwise distinct', () => {
+    fc.assert(
+      fc.property(historyArbitrary, (history) => {
+        const starts = history.map((version) => ordinal(version.period.effectiveFrom));
+        const result = validateDistinctRuleVersionEffectiveStarts(history);
+
+        expect(result.ok).toBe(new Set(starts).size === starts.length);
+
+        if (!result.ok) {
+          expect(result.error.code).toBe(RULE_ERROR_CODES.RULE_VERSION_DUPLICATE_EFFECTIVE_FROM);
+          expect(result.error.category).toBe(ERROR_CATEGORIES.VALIDATION);
+        }
+      }),
+    );
+  });
+
+  /*
+   * §26: the outcome must not depend on iteration order. Comparing the whole
+   * Result covers the success flag and every field of the error at once, so an
+   * order-dependent detail added to any of them fails here.
+   */
+  it('reports an identical result however the history is arranged', () => {
+    fc.assert(
+      fc.property(
+        historyArbitrary.chain((history) =>
+          permutationsOf(history).map(
+            (permuted) =>
+              [history, permuted] as readonly [
+                readonly RuleVersionEffectivePeriodLike[],
+                readonly RuleVersionEffectivePeriodLike[],
+              ],
+          ),
+        ),
+        ([history, permuted]) => {
+          expect(validateDistinctRuleVersionEffectiveStarts(permuted)).toEqual(
+            validateDistinctRuleVersionEffectiveStarts(history),
+          );
+        },
+      ),
+    );
+  });
+
+  /* §14: identifiers are opaque, so relabelling must change nothing. */
+  it('ignores the version identifiers', () => {
+    fc.assert(
+      fc.property(historyArbitrary, (history) => {
+        expect(validateDistinctRuleVersionEffectiveStarts(relabelled(history))).toEqual(
+          validateDistinctRuleVersionEffectiveStarts(history),
+        );
+      }),
+    );
+  });
+});
+
+describe('selectRuleVersionEffectiveOn properties', () => {
+  /*
+   * The characterisation, over histories whose starts are distinct so the
+   * greatest is unique. Effectiveness comes from the same independent interval
+   * oracle the isEffectiveOn properties use, and the winner is found by ordinal
+   * comparison, so neither isEffectiveOn nor compareFinancialDates is restated.
+   *
+   * Asserting the object identity of the winner proves the characterisation and
+   * the no-copy requirement in one comparison.
+   */
+  it('returns the effective candidate with the greatest start, or none at all', () => {
+    fc.assert(
+      fc.property(distinctStartHistoryArbitrary, dateArbitrary, (history, evaluationDate) => {
+        const effective = history.filter((version) =>
+          expectedEffective(version.period, evaluationDate),
+        );
+        const result = selectRuleVersionEffectiveOn(history, evaluationDate);
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) {
+          return;
+        }
+
+        if (effective.length === 0) {
+          expect(result.value).toBeUndefined();
+          return;
+        }
+
+        const winner = effective.reduce((left, right) =>
+          ordinal(right.period.effectiveFrom) > ordinal(left.period.effectiveFrom) ? right : left,
+        );
+
+        expect(result.value).toBe(winner);
+      }),
+    );
+  });
+
+  it('never returns a version that is not in effect on the evaluation date', () => {
+    fc.assert(
+      fc.property(historyArbitrary, dateArbitrary, (history, evaluationDate) => {
+        const result = selectRuleVersionEffectiveOn(history, evaluationDate);
+
+        if (result.ok && result.value !== undefined) {
+          expect(expectedEffective(result.value.period, evaluationDate)).toBe(true);
+        }
+      }),
+    );
+  });
+
+  /* The selected value must be one of the supplied objects, never a projection. */
+  it('returns one of the supplied objects rather than a copy', () => {
+    fc.assert(
+      fc.property(historyArbitrary, dateArbitrary, (history, evaluationDate) => {
+        const result = selectRuleVersionEffectiveOn(history, evaluationDate);
+
+        if (result.ok && result.value !== undefined) {
+          expect(history).toContain(result.value);
+        }
+      }),
+    );
+  });
+
+  /*
+   * A permutation reuses the same objects, so a successful selection is
+   * referentially equal across arrangements and the whole Result can be
+   * compared — which also covers the failing case, where the error must match
+   * field for field.
+   */
+  it('returns an equal result however the history is arranged', () => {
+    fc.assert(
+      fc.property(
+        historyArbitrary.chain((history) =>
+          permutationsOf(history).map(
+            (permuted) =>
+              [history, permuted] as readonly [
+                readonly RuleVersionEffectivePeriodLike[],
+                readonly RuleVersionEffectivePeriodLike[],
+              ],
+          ),
+        ),
+        dateArbitrary,
+        ([history, permuted], evaluationDate) => {
+          expect(selectRuleVersionEffectiveOn(permuted, evaluationDate)).toEqual(
+            selectRuleVersionEffectiveOn(history, evaluationDate),
+          );
+        },
+      ),
+    );
+  });
+
+  /*
+   * Relabelling changes which identifiers exist but not which start wins. The
+   * selected identifier is deliberately not compared: the relabelled history
+   * holds different identifiers by construction, and Decision 079 excludes them
+   * from selection entirely.
+   */
+  it('is unaffected by the version identifiers', () => {
+    fc.assert(
+      fc.property(historyArbitrary, dateArbitrary, (history, evaluationDate) => {
+        const original = selectRuleVersionEffectiveOn(history, evaluationDate);
+        const renamed = selectRuleVersionEffectiveOn(relabelled(history), evaluationDate);
+
+        expect(renamed.ok).toBe(original.ok);
+
+        if (original.ok && renamed.ok) {
+          expect(renamed.value === undefined).toBe(original.value === undefined);
+
+          if (original.value !== undefined && renamed.value !== undefined) {
+            expect(renamed.value.period.effectiveFrom).toEqual(original.value.period.effectiveFrom);
+          }
+        }
+      }),
+    );
+  });
+
+  /*
+   * A version that has not yet begun is not a candidate, so a change scheduled
+   * for the future cannot reach back and alter today's answer. The added start
+   * is later than every date these generators produce, so the extended history
+   * keeps the distinct starts the property relies on.
+   */
+  it('is unchanged by adding a version that has not yet begun', () => {
+    fc.assert(
+      fc.property(
+        distinctStartHistoryArbitrary,
+        dateArbitrary,
+        fc.integer({ min: 0, max: FAR_FUTURE.length - 1 }),
+        endSeedArbitrary,
+        (history, evaluationDate, futureIndex, seed) => {
+          const start = farFuture(futureIndex);
+          const extended = [...history, versionOf(MAX_HISTORY, start, endFor(start, seed))];
+
+          expect(selectRuleVersionEffectiveOn(extended, evaluationDate)).toEqual(
+            selectRuleVersionEffectiveOn(history, evaluationDate),
+          );
+        },
+      ),
+    );
+  });
+
+  /* Decision 079: no permitted tie-breaker exists, so selection fails instead. */
+  it('refuses to choose when effective candidates share the greatest start', () => {
+    fc.assert(
+      fc.property(tiedHistoryArbitrary, ({ versions, evaluationDate }) => {
+        const result = selectRuleVersionEffectiveOn(versions, evaluationDate);
+
+        expect(result.ok).toBe(false);
+
+        if (!result.ok) {
+          expect(result.error.code).toBe(RULE_ERROR_CODES.RULE_VERSION_DUPLICATE_EFFECTIVE_FROM);
+          expect(result.error.category).toBe(ERROR_CATEGORIES.VALIDATION);
+        }
+      }),
+    );
+  });
+
+  it('refuses identically however the tied history is arranged', () => {
+    fc.assert(
+      fc.property(
+        tiedHistoryArbitrary.chain((dated) =>
+          permutationsOf(dated.versions).map(
+            (permuted) =>
+              [dated, permuted] as readonly [
+                DatedHistory,
+                readonly RuleVersionEffectivePeriodLike[],
+              ],
+          ),
+        ),
+        ([dated, permuted]) => {
+          expect(selectRuleVersionEffectiveOn(permuted, dated.evaluationDate)).toEqual(
+            selectRuleVersionEffectiveOn(dated.versions, dated.evaluationDate),
+          );
+        },
+      ),
+    );
+  });
+});
+
+/**
+ * The pair Decision 079 turns on: selection answers for one date, and its
+ * answering is never a finding that the history is valid. Both properties read
+ * the same generated history, so the two outcomes are asserted of one object
+ * rather than of two conveniently different ones.
+ */
+describe('Decision 079 keeps selection and history validity apart', () => {
+  it('selects the unique later candidate although an earlier start is duplicated', () => {
+    fc.assert(
+      fc.property(lesserDuplicateHistoryArbitrary, ({ versions, evaluationDate }) => {
+        const result = selectRuleVersionEffectiveOn(versions, evaluationDate);
+
+        expect(result.ok).toBe(true);
+        if (!result.ok) {
+          return;
+        }
+
+        const selected = result.value;
+        expect(selected).toBeDefined();
+        if (selected === undefined) {
+          return;
+        }
+
+        const effective = versions.filter((version) =>
+          expectedEffective(version.period, evaluationDate),
+        );
+
+        expect(ordinal(selected.period.effectiveFrom)).toBe(greatestStart(effective));
+      }),
+    );
+  });
+
+  it('still rejects that same history as a version history', () => {
+    fc.assert(
+      fc.property(lesserDuplicateHistoryArbitrary, ({ versions }) => {
+        const result = validateDistinctRuleVersionEffectiveStarts(versions);
+
+        expect(result.ok).toBe(false);
+
+        if (!result.ok) {
+          expect(result.error.code).toBe(RULE_ERROR_CODES.RULE_VERSION_DUPLICATE_EFFECTIVE_FROM);
+        }
+      }),
+    );
+  });
+});
+
+/**
+ * A property that never reaches its interesting branch proves nothing. These
+ * sample the generators directly, with a fixed seed so the frequencies are
+ * stable, and fail if a branch above has quietly stopped being exercised.
+ *
+ * This mirrors the "registries are populated, so the checks below are not
+ * vacuous" block in src/test/architecture/rule-code-registries.test.ts.
+ */
+describe('the Decision 079 generators are not vacuous', () => {
+  const SAMPLE = { numRuns: 500, seed: 20260814 };
+
+  const histories = fc.sample(historyArbitrary, SAMPLE);
+  const datedHistories = fc.sample(fc.tuple(historyArbitrary, dateArbitrary), SAMPLE);
+  const distinctDated = fc.sample(fc.tuple(distinctStartHistoryArbitrary, dateArbitrary), SAMPLE);
+
+  const share = (count: number): number => count / SAMPLE.numRuns;
+
+  it('keeps the date pool ascending, which the index arithmetic above relies on', () => {
+    const ordinals = DATE_POOL.map(ordinal);
+
+    expect([...ordinals].sort((left, right) => left - right)).toEqual(ordinals);
+  });
+
+  it('produces histories both with and without duplicate starts', () => {
+    const duplicated = histories.filter((history) => {
+      const starts = history.map((version) => ordinal(version.period.effectiveFrom));
+      return new Set(starts).size !== starts.length;
+    }).length;
+
+    expect(share(duplicated)).toBeGreaterThan(0.1);
+    expect(share(duplicated)).toBeLessThan(0.9);
+  });
+
+  it('produces every selection outcome', () => {
+    const outcomes = datedHistories.map(([history, evaluationDate]) => {
+      const result = selectRuleVersionEffectiveOn(history, evaluationDate);
+      if (!result.ok) {
+        return 'error';
+      }
+      return result.value === undefined ? 'none' : 'selected';
+    });
+
+    for (const outcome of ['error', 'none', 'selected']) {
+      expect(share(outcomes.filter((entry) => entry === outcome).length)).toBeGreaterThan(0.02);
+    }
+  });
+
+  it('produces open-ended, finite and one-day periods', () => {
+    const periods = histories.flatMap((history) => history.map((version) => version.period));
+    const openEnded = periods.filter((period) => period.effectiveTo === undefined).length;
+    const oneDay = periods.filter(
+      (period) =>
+        period.effectiveTo !== undefined &&
+        ordinal(period.effectiveTo) === ordinal(period.effectiveFrom),
+    ).length;
+
+    /* Observed at this seed: 50% open-ended, 50% finite, 29% of all periods one-day. */
+    expect(openEnded / periods.length).toBeGreaterThan(0.2);
+    expect((periods.length - openEnded) / periods.length).toBeGreaterThan(0.2);
+    expect(oneDay / periods.length).toBeGreaterThan(0.1);
+  });
+
+  it('lands the evaluation date exactly on a start and exactly on an end', () => {
+    const onStart = datedHistories.filter(([history, evaluationDate]) =>
+      history.some((version) => ordinal(version.period.effectiveFrom) === ordinal(evaluationDate)),
+    ).length;
+
+    const onEnd = datedHistories.filter(([history, evaluationDate]) =>
+      history.some(
+        (version) =>
+          version.period.effectiveTo !== undefined &&
+          ordinal(version.period.effectiveTo) === ordinal(evaluationDate),
+      ),
+    ).length;
+
+    expect(share(onStart)).toBeGreaterThan(0.05);
+    expect(share(onEnd)).toBeGreaterThan(0.02);
+  });
+
+  it('produces valid histories with more than one candidate in effect at once', () => {
+    const competing = distinctDated.filter(
+      ([history, evaluationDate]) =>
+        history.filter((version) => expectedEffective(version.period, evaluationDate)).length > 1,
+    ).length;
+
+    expect(share(competing)).toBeGreaterThan(0.1);
+  });
+
+  it('builds tied and lesser-duplicate histories that hold their intended shape', () => {
+    const tied = fc.sample(tiedHistoryArbitrary, SAMPLE);
+    const lesser = fc.sample(lesserDuplicateHistoryArbitrary, SAMPLE);
+
+    expect(
+      tied.every(({ versions, evaluationDate }) => {
+        return !selectRuleVersionEffectiveOn(versions, evaluationDate).ok;
+      }),
+    ).toBe(true);
+
+    expect(
+      lesser.every(({ versions }) => !validateDistinctRuleVersionEffectiveStarts(versions).ok),
+    ).toBe(true);
+
+    expect(
+      lesser.every(({ versions, evaluationDate }) => {
+        return selectRuleVersionEffectiveOn(versions, evaluationDate).ok;
+      }),
+    ).toBe(true);
   });
 });
