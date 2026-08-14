@@ -6,12 +6,19 @@ import type {
   ResolvedTopPriorityPlan,
   ResolvedTopPriorityShare,
 } from '@domain/rules/contracts/resolved-top-priority-plan';
+import {
+  isEffectiveOn,
+  type RuleEffectivePeriod,
+} from '@domain/rules/contracts/rule-effective-period';
 import { RULE_WARNING_CODES } from '@domain/rules/contracts/rule-warning-codes';
 import { RULE_ERROR_CODES } from '@domain/rules/errors/rule-error-codes';
 import { validateAuthoredPoolTotal } from '@domain/rules/validation/authored-percentage-pool';
+import { validateRuleEffectivePeriod } from '@domain/rules/validation/rule-effective-period';
 import { validateTopPriorityCount } from '@domain/rules/validation/top-priority-count';
 import { validateTopPriorityRanks } from '@domain/rules/validation/top-priority-ranks';
 import { produceTopPriorityWarnings } from '@domain/rules/warnings/top-priority-warnings';
+import { financialDate, type FinancialDate } from '@domain/shared/dates/financial-date';
+import { ERROR_CATEGORIES } from '@domain/shared/errors/error-category';
 import { asEntityId } from '@domain/shared/ids/entity-id';
 import {
   BASIS_POINTS_SCALE,
@@ -25,9 +32,9 @@ import {
  *
  * PFOS-ENG-01 §26 requires that resolution never depend on object iteration
  * order or on random identifiers, and §43.4 asks that repeated and reordered
- * input produce identical output. The four functions exercised below are the
- * only Rule Engine behavior accepted so far (Decisions 071, 075, 076, 077), so
- * they are the only place those requirements can be tested today.
+ * input produce identical output. The six functions exercised below are the
+ * only Rule Engine behavior accepted so far (Decisions 071, 075, 076, 077,
+ * 078), so they are the only place those requirements can be tested today.
  *
  * Example-based coverage already sits beside each function and is not repeated
  * here. This file adds only what an example cannot state: that the
@@ -356,6 +363,185 @@ describe('validateAuthoredPoolTotal properties', () => {
       fc.property(permutedPoolPairArbitrary, ([original, permuted]) => {
         expect(validateAuthoredPoolTotal(permuted.map(rate))).toEqual(
           validateAuthoredPoolTotal(original.map(rate)),
+        );
+      }),
+    );
+  });
+});
+
+/** Builds a date, failing loudly if the test supplied an invalid one. */
+function date(year: number, month: number, day: number): FinancialDate {
+  const result = financialDate(year, month, day);
+  if (!result.ok) {
+    throw new Error(`Invalid date in test setup: ${result.error.code}`);
+  }
+  return result.value;
+}
+
+/**
+ * A date reduced to one comparable integer.
+ *
+ * This is an independent oracle. Restating `compareFinancialDates` to check code
+ * that already calls it would prove nothing, so chronological order is
+ * recomputed arithmetically here instead. Every component is bounded — year at
+ * most 9999, month at most 12, day at most 31 — so the packing preserves order
+ * exactly.
+ */
+const ordinal = (value: FinancialDate): number =>
+  value.year * 10000 + value.month * 100 + value.day;
+
+/**
+ * The date pool is deliberately small so that boundary cases arise often. Equal
+ * dates are what produce one-day periods and exact-endpoint evaluations, and an
+ * inverted period needs two pool dates drawn in the wrong order; a wide random
+ * range would make all three vanishingly rare. The pool spans a leap day, month
+ * ends and year ends, and a wider generator is mixed in for breadth.
+ */
+const DATE_POOL: readonly FinancialDate[] = [
+  date(2024, 2, 29),
+  date(2025, 12, 31),
+  date(2026, 1, 1),
+  date(2026, 2, 28),
+  date(2026, 6, 15),
+  date(2026, 12, 31),
+  date(2027, 1, 1),
+];
+
+const pooledDateArbitrary: fc.Arbitrary<FinancialDate> = fc.constantFrom(...DATE_POOL);
+
+const wideDateArbitrary: fc.Arbitrary<FinancialDate> = fc
+  .tuple(
+    fc.integer({ min: 2020, max: 2030 }),
+    fc.integer({ min: 1, max: 12 }),
+    fc.integer({ min: 1, max: 28 }),
+  )
+  .map(([year, month, day]) => date(year, month, day));
+
+const dateArbitrary: fc.Arbitrary<FinancialDate> = fc.oneof(
+  { weight: 4, arbitrary: pooledDateArbitrary },
+  { weight: 1, arbitrary: wideDateArbitrary },
+);
+
+/**
+ * A finite period draws its endpoints independently, so inverted periods arise
+ * naturally and are never filtered away. Decision 078 makes an inverted period
+ * both a validation failure and a predicate that matches nothing; excluding
+ * them would delete the rejecting branch from every property below.
+ */
+const finitePeriodArbitrary: fc.Arbitrary<RuleEffectivePeriod> = fc
+  .tuple(dateArbitrary, dateArbitrary)
+  .map(([effectiveFrom, effectiveTo]) => ({ effectiveFrom, effectiveTo }));
+
+const openEndedPeriodArbitrary: fc.Arbitrary<RuleEffectivePeriod> = dateArbitrary.map(
+  (effectiveFrom) => ({ effectiveFrom }),
+);
+
+const periodArbitrary: fc.Arbitrary<RuleEffectivePeriod> = fc.oneof(
+  openEndedPeriodArbitrary,
+  finitePeriodArbitrary,
+);
+
+/** Rebuilds a period from fresh objects, preserving an absent end as absent. */
+function copyPeriod(period: RuleEffectivePeriod): RuleEffectivePeriod {
+  const effectiveFrom = { ...period.effectiveFrom };
+
+  return period.effectiveTo === undefined
+    ? { effectiveFrom }
+    : { effectiveFrom, effectiveTo: { ...period.effectiveTo } };
+}
+
+/** The accepted interval, expressed independently of the implementation. */
+const expectedEffective = (period: RuleEffectivePeriod, evaluationDate: FinancialDate): boolean =>
+  ordinal(period.effectiveFrom) <= ordinal(evaluationDate) &&
+  (period.effectiveTo === undefined || ordinal(evaluationDate) <= ordinal(period.effectiveTo));
+
+const isInverted = (period: RuleEffectivePeriod): boolean =>
+  period.effectiveTo !== undefined && ordinal(period.effectiveTo) < ordinal(period.effectiveFrom);
+
+describe('isEffectiveOn properties', () => {
+  it('matches the accepted inclusive interval for any period and date', () => {
+    fc.assert(
+      fc.property(periodArbitrary, dateArbitrary, (period, evaluationDate) => {
+        expect(isEffectiveOn(period, evaluationDate)).toBe(
+          expectedEffective(period, evaluationDate),
+        );
+      }),
+    );
+  });
+
+  /* Decision 078: an absent end runs indefinitely, so the start is the only boundary. */
+  it('is false before the start and true from the start onward when open-ended', () => {
+    fc.assert(
+      fc.property(dateArbitrary, dateArbitrary, (effectiveFrom, evaluationDate) => {
+        expect(isEffectiveOn({ effectiveFrom }, evaluationDate)).toBe(
+          ordinal(evaluationDate) >= ordinal(effectiveFrom),
+        );
+      }),
+    );
+  });
+
+  /* Decision 078: equal endpoints are in effect on exactly one day. */
+  it('matches only its own day when the endpoints are equal', () => {
+    fc.assert(
+      fc.property(dateArbitrary, dateArbitrary, (day, evaluationDate) => {
+        expect(isEffectiveOn({ effectiveFrom: day, effectiveTo: day }, evaluationDate)).toBe(
+          ordinal(evaluationDate) === ordinal(day),
+        );
+      }),
+    );
+  });
+
+  /*
+   * Decision 078 keeps the predicate free of validation. An inverted period is
+   * not special-cased and not rejected here; it simply satisfies no date.
+   */
+  it('matches no date at all when the period is inverted', () => {
+    fc.assert(
+      fc.property(finitePeriodArbitrary, dateArbitrary, (period, evaluationDate) => {
+        fc.pre(isInverted(period));
+
+        expect(isEffectiveOn(period, evaluationDate)).toBe(false);
+      }),
+    );
+  });
+
+  it('agrees for structurally equal periods and dates', () => {
+    fc.assert(
+      fc.property(periodArbitrary, dateArbitrary, (period, evaluationDate) => {
+        expect(isEffectiveOn(copyPeriod(period), { ...evaluationDate })).toBe(
+          isEffectiveOn(period, evaluationDate),
+        );
+      }),
+    );
+  });
+});
+
+describe('validateRuleEffectivePeriod properties', () => {
+  /*
+   * Decision 078 establishes exactly one period invariant, so acceptance is
+   * determined solely by whether the end precedes the start. An absent end and
+   * equal endpoints both pass.
+   */
+  it('accepts a period exactly when its end does not precede its start', () => {
+    fc.assert(
+      fc.property(periodArbitrary, (period) => {
+        const result = validateRuleEffectivePeriod(period);
+
+        expect(result.ok).toBe(!isInverted(period));
+
+        if (!result.ok) {
+          expect(result.error.code).toBe(RULE_ERROR_CODES.RULE_EFFECTIVE_PERIOD_INVALID_RANGE);
+          expect(result.error.category).toBe(ERROR_CATEGORIES.VALIDATION);
+        }
+      }),
+    );
+  });
+
+  it('returns an equal Result for structurally equal periods', () => {
+    fc.assert(
+      fc.property(periodArbitrary, (period) => {
+        expect(validateRuleEffectivePeriod(copyPeriod(period))).toEqual(
+          validateRuleEffectivePeriod(period),
         );
       }),
     );
