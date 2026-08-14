@@ -17,10 +17,11 @@
  * This registry is deliberately minimal. It holds only the codes whose meaning
  * is already settled by an accepted decision — the two authored-percentage-pool
  * failures assigned to the Rule Engine by Decision 071 "Validation ownership",
- * and the two top-priority failures named by Decision 076. The remaining
- * hard-validation codes in PFOS-ENG-01 §21.1 arrive with the milestone phase
- * that implements the validation behind them, so that no code is published
- * before the rule it reports is specified.
+ * the two top-priority failures named by Decision 076, and the effective-period
+ * range failure named by Decision 078. The remaining hard-validation codes in
+ * PFOS-ENG-01 §21.1 arrive with the milestone phase that implements the
+ * validation behind them, so that no code is published before the rule it
+ * reports is specified.
  */
 export const RULE_ERROR_CODES = {
   /*
@@ -58,6 +59,25 @@ export const RULE_ERROR_CODES = {
    * position, because no accepted source requires any of those.
    */
   RULE_TOP_PRIORITY_DUPLICATE_RANK: 'RULE_TOP_PRIORITY_DUPLICATE_RANK',
+
+  /*
+   * A rule version's effective period ends before it starts (Decision 078;
+   * PFOS-ENG-01 §18, §21.1, §43.3).
+   *
+   * This reports one condition and only one: `effectiveTo` is present and falls
+   * strictly before `effectiveFrom`. An absent `effectiveTo` is an open-ended
+   * period and is valid, and endpoints that are equal describe a valid one-day
+   * period, so neither is reported here.
+   *
+   * It says nothing about how two periods relate. Decision 078 introduces no
+   * overlap rule, no contiguity rule and no restriction on the number of
+   * open-ended versions, so no code is registered for any of them.
+   *
+   * The shared DATE_RANGE_INVALID_ORDER is not reused. It belongs to the shared
+   * DateRange primitive, which requires both endpoints, while Decision 073
+   * confines shared codes to the shared primitive families.
+   */
+  RULE_EFFECTIVE_PERIOD_INVALID_RANGE: 'RULE_EFFECTIVE_PERIOD_INVALID_RANGE',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERROR_CODES)[keyof typeof RULE_ERROR_CODES];
