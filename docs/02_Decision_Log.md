@@ -4956,6 +4956,231 @@ Reconsider when the authored `Rule` contract is accepted, since the level and sl
 
 ---
 
+# Decision 081: Authored Rule Ownership, Slot Kind and Precedence Derivation
+
+**Status:** Accepted
+**Related:** Decisions 010, 016, 017, 020, 022, 028, 068, 073, 074, 076, 077, 078, 079, 080
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+An authored `Rule` carries a stable identity, an owner, and the kind of resolved structure it contributes to:
+
+```ts
+export type RuleOwner =
+  | { readonly ownerType: 'GLOBAL' }
+  | { readonly ownerType: 'INCOME_SOURCE'; readonly ownerId: EntityId }
+  | { readonly ownerType: 'BUCKET';        readonly ownerId: EntityId }
+  | { readonly ownerType: 'GROUP';         readonly ownerId: EntityId };
+
+export type ResolvedSlotKind =
+  | 'ALLOCATION_BASIS'
+  | 'GLOBAL_OBLIGATION'
+  | 'TOP_PRIORITIES'
+  | 'REQUIRED_FUNDING'
+  | 'LOWER_PRIORITY_POOL'
+  | 'LEFTOVER_POLICY'
+  | 'ROLLOVER_POLICY'
+  | 'GOAL_POLICY';
+
+export interface Rule {
+  readonly ruleId: RuleId;
+  readonly owner: RuleOwner;
+  readonly slotKind: ResolvedSlotKind;
+}
+```
+
+`RuleId` and `RuleVersionId` are unchanged from Decision 078.
+
+## A slot kind is not an exact resolved address
+
+`ResolvedSlotKind` identifies which rule-authored `ResolvedRuleSet` structure established by Decision 074 a rule contributes to. It has one member per such structure, so the vocabulary cannot drift from an accepted contract.
+
+Its meaning is deliberately narrow. It is not an exact resolved address. It does not identify a bucket subject for keyed structures. It does not settle whether bucket identifiers are stable addressing or `RuleVersion` configuration. It does not establish a natural key or any uniqueness constraint.
+
+`REQUIRED_FUNDING`, `ROLLOVER_POLICY` and `GOAL_POLICY` are keyed by bucket, and `TOP_PRIORITIES` and `LOWER_PRIORITY_POOL` carry per-bucket entries inside a plan-level structure. An exact address is a kind together with a subject, and this decision does not establish how a subject is determined in every case.
+
+Where the subject is determined by accepted sources:
+
+- a plan-level kind has no subject;
+- a bucket-owned rule's subject is its owner;
+- a group-owned rule contributes to that group's child buckets, derived from bucket-to-group membership, which is entity state supplied in the evaluation context rather than a rule field (Decision 010; PFOS-ENG-01 §5.4);
+- a global rule addressing a bucket-keyed kind contributes to every bucket.
+
+Where it is not determined, the reason is recorded in the next section.
+
+`stageSequence` has no slot kind. Decision 080 records that no §5 category authors a stage order and that the sequence is Rule Engine output.
+
+## Rule authoring granularity is not settled by this decision
+
+For `TOP_PRIORITIES` and `LOWER_PRIORITY_POOL`, and for whether a non-bucket owner may supply a `REQUIRED_FUNDING` default, the corpus supports two readings and no accepted source chooses between them.
+
+PFOS-ENG-01 §42.2 and §42.3, which are accepted configuration examples, carry `bucketIds` and `allocations: [{ bucketId, basisPoints }]` inside one configuration. Under that reading one plan-level rule holds the strategy and the membership together, the target buckets are versioned configuration, and changing the top-priority set is an edit producing a new version.
+
+§5.3 lists "Priority rank" and "Eligibility for leftover funds" among rules attached to an individual bucket. Under that reading the bucket is the owner, and changing which bucket is a top priority means a different logical rule.
+
+§5.2 lists "Use a different set of eligible buckets" as an income-source rule, which names buckets that cannot be its owner.
+
+Decision 074's `ResolvedTopPriorityEntry.ruleVersionIds` and `ResolvedPoolDestination.ruleVersionIds` are plural, accommodating assembly from more than one rule version without requiring it.
+
+This is not a configuration-payload question that can be deferred to the payload decision. It decides whether a target bucket is stable addressing or versioned configuration, and therefore what makes two authored rules the same logical rule. It is named here as the next required decision.
+
+One consequence worth recording for that decision, as evidence rather than as a finding: under Decision 080's replacing semantics a bucket-owned membership rule sits at level 6 and would displace a global strategy rule at level 8 rather than combine with it.
+
+## Ownership
+
+Ownership is a discriminated shape rather than an `ownerType` paired with an optional `ownerId`. PFOS-ENG-01 §47.8 requires discriminated unions rather than loosely structured objects, and a global rule owns no entity, so an always-present-except-once identifier is exactly the shape §47.8 names. Decision 074 uses discriminated unions throughout the resolved contract.
+
+`GLOBAL` carries no `ownerId`. The other three variants each carry one.
+
+The four variants are the four authored levels of §6. §5 describes each category as "Rules attached to" an income source (§5.2), an individual bucket (§5.3) or a bucket group (§5.4); attachment is the corpus's own word for this relationship.
+
+## Identity
+
+A `Rule` is the stable logical rule. It persists across edits, and each edit creates a new `RuleVersion` rather than mutating the historical meaning of the previous one (§18, §19.1, §19.2; Decision 022). Decision 078 established this and the implemented `RuleId` already documents it.
+
+`RuleId` remains that stable logical identity across every version.
+
+A `Rule` additionally carries stable ownership and slot-kind information. Changing an owner or a slot kind creates a different logical rule rather than retroactively changing what all historical rule versions governed, which §19.1 forbids.
+
+This does not make `owner` and `slotKind` the rule's natural key. A natural key — what makes two rules the same logical rule without consulting the surrogate identity — is not established here, and cannot be until authoring granularity is settled.
+
+## Precedence is derived, never stored
+
+`Rule` stores no precedence level. The §6 level is a total function of the owner:
+
+```text
+INCOME_SOURCE -> 5
+BUCKET        -> 6
+GROUP         -> 7
+GLOBAL        -> 8
+```
+
+Storing the level as well would create two fields that can disagree.
+
+No independent stored `RulePrecedenceLevel` vocabulary is introduced. Levels 5 through 8 relabel the owner variants, and level 9 has no owner because a product default is not a rule. Decision 080 recorded such a vocabulary as implementable rather than required; this narrows that option rather than contradicting it.
+
+§43.2's worked precedence test is directly representable: three rules with `slotKind: 'ROLLOVER_POLICY'`, owned by global, group and bucket, resolving against the product default constant.
+
+## ruleCategory is not part of the stable authored Rule
+
+§41 lists `ruleCategory`. §41 is self-declared conceptual, and Decision 078 already amended it.
+
+A §5 category cannot name a resolved slot kind. Decision 080 established that §5.1 feeds both the additive obligation slot and several replacing slots, so a category can feed more than one resolved slot kind and is therefore not the stable address. No accepted source supplies a category-to-slot mapping.
+
+## ruleType is not part of the stable authored Rule
+
+Rule type, policy type and funding type are versioned configuration. Decision 074 already places them there: `FundingRuleConfig.type`, `RolloverPolicyConfig.policyType` and `ResolvedLeftoverPolicy.policyType`.
+
+An ordinary edit may change one while the rule remains the same logical rule. Changing a bucket from `PERCENTAGE_OF_INCOME` to `FIXED_MONTHLY` is such an edit, and §18 and §19.2 make an edit a new version. Storing the type on the stable `Rule` would force either mutating stable identity or minting a second rule, losing the version continuity §19.1 requires and §19.3 reports to the user.
+
+No `RuleVersion` payload is designed here.
+
+## Same-level contention remains unresolved
+
+Decision 080 deferred to this contract whether two rules at one level addressing one slot are structurally impossible, invalid at authoring or activation time, or a resolver case. This decision does not answer it. It narrows the question instead.
+
+No uniqueness key is adopted. The tuple `(ownerType, ownerId, slotKind)` was considered and is too coarse: for `TOP_PRIORITIES` and `LOWER_PRIORITY_POOL`, two rules sharing that tuple may legitimately target different buckets under one authoring reading and be duplicates under the other, so its validity depends on the unsettled granularity.
+
+Separately, no uniqueness invariant can be stated over stable `Rule` fields alone. Effective periods belong to `RuleVersion` under Decision 078, so a rule-only validator cannot evaluate simultaneous applicability, and `Rule.status` is undefined, so a plan may legitimately hold a superseded rule at the same address as its replacement.
+
+Two questions must therefore stay apart:
+
+- structural uniqueness over authored addresses, which requires authoring granularity and lifecycle;
+- evaluation-date applicability after Decision 079 version selection, which requires versions and an evaluation context.
+
+No validator is authorised. No error code is registered. Decision 073's convention is that a code is named once the behavior it reports is specified, and that behavior is not yet specified.
+
+## Product defaults are fallback constants, not authored Rules
+
+§6 level 9 is a resolver fallback step rather than a fifth `RuleOwner` variant.
+
+§8.1 calls the product default "a predefined fallback used only when the user has not made a choice". §18 requires every permanent rule to carry a created timestamp, effective start, optional end, status and version identifier, none of which a product default has. Decision 078 places the effective period on a version, and a product default has no period. §40's audit records a user's change with a previous and a new version, while a product default changes only when the application ships. Decision 074 stores the resolved set by value in a Plan Snapshot, so historical fidelity does not require defaults to be rules.
+
+No missing product-default value is chosen here.
+
+## A discovered provenance gap, recorded but not solved
+
+`ResolvedRolloverPolicy`, `ResolvedGoalPolicy` and `ResolvedFundingRule` each carry a non-optional `ruleVersionId`. Under Decision 028 most buckets author no rollover rule, so their resolved entry would come from the product default and has no rule version to name.
+
+This decision does not make `ruleVersionId` optional and does not amend Decision 074.
+
+The decision that settles the missing terminal defaults must also settle how a default-sourced resolved entry expresses provenance. If that fix makes `ruleVersionId` optional on those shapes, it is a Decision 074 amendment requiring a `schemaVersion` change, because Decision 074 requires a schema-version change for any incompatible persisted-contract change.
+
+## Deliberately deferred
+
+- Rule authoring granularity for `TOP_PRIORITIES`, `LOWER_PRIORITY_POOL` and non-bucket-owned `REQUIRED_FUNDING`, which is the next required decision.
+- The exact resolved address and any natural key.
+- Same-level contention, and any uniqueness validator or error code.
+- `Rule.status`, lifecycle, and how an open-ended rule is stopped.
+- `currentVersionId`, `versionNumber`, `supersedesVersionId` and `changeReason`.
+- The full `RuleVersion` configuration payload.
+- `ResolvedGlobalObligation.sequence` and `ResolvedFundingRule.sequence`.
+- The missing product-default values, and the provenance gap recorded above.
+- Blocker F: eligible-income computation ownership.
+- Evaluation-context population.
+- Explanation multiplicity.
+- Plan Snapshot design.
+- Simulation overrides and event-level overrides.
+- Cycle detection.
+- Runtime freezing.
+- Warning-array ordering.
+- All Milestone 3 allocation behavior.
+
+## Why
+
+Decisions 078 and 079 each left `ownerType`, `ownerId`, `ruleCategory` and `ruleType` alone because they carry the §6 hierarchy that Blocker C gated. Decision 080 discharged that classification and named this contract as the prerequisite for the slot projection, resolver dispatch and same-level contention.
+
+Two of §41's four addressing fields do not survive scrutiny. A category cannot name a slot kind, and a type is what an ordinary edit changes. What replaces them is smaller — an owner and a slot kind — and the kind is a transcription of an accepted contract rather than a new vocabulary.
+
+The decision stops at the kind because the corpus does not yet say, for three of the eight kinds, whether a target bucket is the rule's owner or its configuration. Answering that by choosing whichever shape makes a uniqueness validator possible would be designing the model to reach a conclusion, which is the reverse of the proper order.
+
+## Alternatives Considered
+
+An exact-address model, in which a rule names both a kind and a subject, was rejected for now. The subject is either derivable — from the owner, from group membership, or universally — or it lives in configuration that has not been designed, and inventing an address structure would presuppose the granularity answer.
+
+Splitting `TOP_PRIORITIES` and `LOWER_PRIORITY_POOL` into separate strategy and membership kinds, as Decision 080's classification list does, was rejected for addressing. §42.2 and §42.3 show strategy and membership in one authored configuration, so that split is a classification granularity rather than an established authoring one.
+
+Omitting `ResolvedSlotKind` entirely and deciding ownership alone was considered. It carries no split risk, but it removes `ruleCategory` without supplying a replacement, leaving no accepted way to group candidate rules.
+
+`ownerType` with an optional `ownerId` was rejected under §47.8.
+
+Retaining `ruleCategory` or `ruleType` on the stable `Rule` was rejected for the reasons above. The `ruleType` objection is a versioning defect rather than a style preference.
+
+Storing a precedence level, or storing a subject, was rejected. Both are derivable, and two fields that can disagree are not permitted.
+
+Making the address the rule's identity and dropping `ruleId` was rejected. It would delete a field that Decision 074's `SkippedRule`, Decision 079's rule-level skip records and §40's audit all require, and it would force structural impossibility by construction rather than deriving it.
+
+Adopting `(ownerType, ownerId, slotKind)` as a uniqueness key, authorising a duplicate-address validator, and registering an error code for it were each considered and rejected for the reasons recorded above.
+
+Representing product defaults as authored rules was rejected for the reasons recorded above, notwithstanding that it would have concealed the provenance gap.
+
+## Tradeoffs
+
+The decision settles ownership and slot kind while leaving the exact address open, so addressing arrives across two decisions rather than one.
+
+`ResolvedSlotKind` may need to split two of its members if authoring granularity later chooses per-bucket authoring, and `slotKind` is intended for persistence, so that would be a migration.
+
+Same-level contention, which Decision 080 deferred to this contract, is deferred again — but to one named question rather than to a contract in general.
+
+Ownership is settled while lifecycle is not, so a rule can be addressed before it can be stopped.
+
+## Consequences
+
+Milestone 2 may implement the ownership and slot-kind types and a derived precedence-level projection, with §6 ordering tests and §43.2's chain expressed as an ordering assertion.
+
+No validator is authorised. No code registry changes. No `ResolvedRuleSet` field changes.
+
+Decision 080's same-level deferral is narrowed rather than discharged, and its statement that no error code is registered stands unchanged.
+
+Blocker F remains open.
+
+## Future Review Trigger
+
+Reconsider when Rule authoring granularity is settled, since the exact address, the natural key and same-level contention all become determinable; when `Rule.status` is defined; when the `RuleVersion` payload is designed; if Decision 074 gains a rule-authored structure, since `ResolvedSlotKind` must gain a member; or if the provenance gap is resolved by amending Decision 074.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
