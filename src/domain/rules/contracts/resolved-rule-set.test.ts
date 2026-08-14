@@ -106,7 +106,7 @@ const SKIPPED: SkippedRule = {
 };
 
 const WARNING: DomainWarning = {
-  code: 'RULE_NO_TOP_PRIORITIES_CONFIGURED',
+  code: 'RULE_WARN_NO_TOP_PRIORITIES_CONFIGURED',
   message: 'No top priorities are configured.',
   affectedEntityIds: [],
 };
