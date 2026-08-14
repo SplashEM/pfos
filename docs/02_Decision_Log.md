@@ -4370,6 +4370,148 @@ Reconsider when a second warning producer exists, since warning-array ordering m
 
 ---
 
+# Decision 078: RuleVersion Owns Its Effective Period
+
+**Status:** Accepted
+**Related:** Decisions 022, 023, 068, 073, 074
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+A rule's effective period belongs to the `RuleVersion` rather than to the stable `Rule`. It is represented by a required start and an optional end:
+
+```ts
+export interface RuleEffectivePeriod {
+  readonly effectiveFrom: FinancialDate;
+  readonly effectiveTo?: FinancialDate;
+}
+```
+
+## Boundary semantics
+
+Both endpoints are included. A version is in effect on an evaluation date when:
+
+```text
+effectiveFrom <= evaluationDate
+```
+
+and, when `effectiveTo` is present:
+
+```text
+evaluationDate <= effectiveTo
+```
+
+Inclusivity is fixed by this decision and by the tests that accompany it, not by the field name. `effectiveTo` is the name PFOS-ENG-01 §41 already uses, and introducing a new name to carry the semantics would add terminology drift without adding meaning.
+
+An absent `effectiveTo` means the version is in effect indefinitely from `effectiveFrom` onward. This is the ordinary case, not an exception. `exactOptionalPropertyTypes` is enabled, so the property is absent rather than explicitly `undefined`.
+
+`DateRange` is not used. It requires both endpoints, and PFOS-ENG-01 §18 makes the end optional.
+
+## Amendment to PFOS-ENG-01 §41
+
+§41 lists `effectiveFrom` and `effectiveTo` on `Rule` and gives `RuleVersion` no dates. That placement is superseded.
+
+§19.2 gives versions their own effective dates, and Decision 074 assigns the Rule Engine the job of selecting the applicable rule version by effective date. Neither is expressible if only the stable `Rule` carries the period. §41 is self-declared conceptual and defers field types to the architecture and database specifications.
+
+The field names are unchanged from §41.
+
+## Identity
+
+A `RuleVersion` is identified by `ruleVersionId`, and its parent rule by `ruleId`:
+
+```ts
+export type RuleId = EntityId;
+export type RuleVersionId = EntityId;
+```
+
+Both are semantic aliases of `EntityId`, following Decision 074's treatment of `PlanVersionId`. No new branded identifier is introduced, and the distinction is preserved through field names, documentation and tests rather than through a second brand.
+
+`planVersionId` is not part of an authored `RuleVersion`. It is provenance of a resolved set, and an authored rule must not depend on resolution.
+
+## Validity
+
+A period whose `effectiveTo` is present and falls strictly before its `effectiveFrom` is a hard validation error reporting `RULE_EFFECTIVE_PERIOD_INVALID_RANGE`, with category `VALIDATION`. This satisfies PFOS-ENG-01 §21.1 "Invalid effective date range" and §43.3 "Invalid date ranges".
+
+That is the code's sole behavior. It reports nothing else, and this decision registers no other code.
+
+A period whose endpoints are equal is valid. It describes a one-day rule, which is meaningful and which no accepted source forbids.
+
+An `effectiveFrom` in the past or in the future is valid. §28 permits a rule to take effect immediately or on a future date.
+
+This is the only period invariant introduced. No minimum duration, gap prohibition, overlap prohibition, contiguity requirement, or restriction on the number of open-ended versions is established.
+
+If no version of a rule is effective on the evaluation date, that rule contributes nothing for that date.
+
+## Multi-version selection is deferred
+
+Selection across multiple simultaneously effective versions is not established by this decision. No overlap behavior or tie-breaker is introduced. In particular, identifiers must not be used as a financial tie-breaker.
+
+This decision defines when a single version is effective. It takes no position on whether overlapping versions should later be prohibited at validation time, resolved by some ordering, or handled another way.
+
+## Immutability
+
+A `RuleVersion`'s effective period does not change after the version is created. §18 requires an update to create a new version rather than mutate the historical meaning of the previous one, and §19.1 requires a version used in a confirmed allocation to remain reconstructable.
+
+This is historical immutability through versioning semantics, expressed by `readonly` fields. This decision establishes no runtime freezing behavior, no freeze depth and no freeze ownership; those remain unresolved.
+
+## Unchanged by this decision
+
+The `Rule` contract. `ownerType`, `ownerId`, `ruleCategory`, `ruleType` and rule-level `status` are untouched, because they carry the §6 precedence hierarchy that Blocker C gates.
+
+No `RuleVersion` lifecycle or status is introduced. §41 places `status` on `Rule`, and §28's choice between immediate and future effect is expressed entirely by `effectiveFrom`.
+
+The `RuleVersion` payload. `configuration`, `versionNumber`, `supersedesVersionId` and `changeReason` are not defined here, and no full `RuleVersion` interface is introduced yet.
+
+Skip production. `RULE_SKIP_NOT_EFFECTIVE_ON_EVALUATION_DATE` already exists under Decision 074, is unchanged by this decision, and no new skip code is introduced. Emitting it requires the resolver and remains gated by Blocker C. A version that is not effective is filtered by the predicate and produces no observable skip yet.
+
+Plan Snapshot design, persistence schema, canonicalization, runtime freezing, Blocker C behavior, Blocker F behavior and Milestone 3 behavior.
+
+## Why
+
+Decision 074 already made version selection by effective date a Rule Engine responsibility, while no accepted source stated where the date lived or whether its endpoints were inclusive.
+
+An inclusive-versus-exclusive end boundary is a one-day error in a real paycheck. It is fixed by decision rather than chosen inside an implementation commit.
+
+Three sources read inclusively and none reads otherwise: PFOS-ENG-00 §9 as implemented in the shared `DateRange`, whose documentation records that a half-open range would misreport every boundary; §19.2's "effective April 1"; and §19.3's user-facing "Tithing changed from 10% to 12% on April 1". `FinancialDate` carries no time component that would make a half-open boundary natural.
+
+## Alternatives Considered
+
+Keeping the period on `Rule` as §41 lists it was rejected: it cannot represent §19.2's two versions of one rule, and it leaves `sourceRuleVersionIds` unable to identify which version produced a resolved value.
+
+Naming the field `effectiveThrough` to signal inclusivity was considered and rejected. §41 already says `effectiveTo`, the semantics are fixed by this decision and enforced by tests, and a second name for the same concept is terminology drift.
+
+Reusing `DateRange` with a sentinel far-future end was rejected: it invents a magic date and misreports every open-ended rule.
+
+An exclusive end was rejected for the reasons recorded above.
+
+Prohibiting overlapping versions now was rejected: it requires a version-collection input, which requires the `Rule` contract this decision deliberately leaves alone.
+
+Introducing a branded `RuleVersionId` was rejected: Decision 074 settled that V1 uses semantic aliases of `EntityId`.
+
+## Tradeoffs
+
+Amending §41 leaves the specification and the decision log disagreeing on paper until §41 is revised.
+
+Deferring multi-version selection means the effective-period contract is implementable while selection is not, so the two arrive in separate commits.
+
+A shape whose end is optional cannot reuse the shared `DateRange`, so the Rule Engine carries a small period type of its own.
+
+## Consequences
+
+`RuleEffectivePeriod`, an `isEffectiveOn` predicate and a bounded period validator may be implemented in Milestone 2.
+
+`RULE_EFFECTIVE_PERIOD_INVALID_RANGE` joins `RULE_ERROR_CODES`, and the four-registry architecture tests cover it without change.
+
+PFOS-ENG-01 §43.3's "Invalid date ranges" test line item becomes satisfiable.
+
+No accepted contract, existing registry value or `ResolvedRuleSet` field changes.
+
+## Future Review Trigger
+
+Reconsider when the `Rule` contract is accepted, since multi-version selection then becomes implementable; if a rule type requires sub-day effectivity, which a date-only period cannot express; or if multi-time-zone support changes how an evaluation date is compared.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
