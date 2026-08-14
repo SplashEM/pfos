@@ -17,11 +17,11 @@
  * This registry is deliberately minimal. It holds only the codes whose meaning
  * is already settled by an accepted decision — the two authored-percentage-pool
  * failures assigned to the Rule Engine by Decision 071 "Validation ownership",
- * the two top-priority failures named by Decision 076, and the effective-period
- * range failure named by Decision 078. The remaining hard-validation codes in
- * PFOS-ENG-01 §21.1 arrive with the milestone phase that implements the
- * validation behind them, so that no code is published before the rule it
- * reports is specified.
+ * the two top-priority failures named by Decision 076, the effective-period
+ * range failure named by Decision 078, and the duplicate effective start named
+ * by Decision 079. The remaining hard-validation codes in PFOS-ENG-01 §21.1
+ * arrive with the milestone phase that implements the validation behind them,
+ * so that no code is published before the rule it reports is specified.
  */
 export const RULE_ERROR_CODES = {
   /*
@@ -78,6 +78,30 @@ export const RULE_ERROR_CODES = {
    * confines shared codes to the shared primitive families.
    */
   RULE_EFFECTIVE_PERIOD_INVALID_RANGE: 'RULE_EFFECTIVE_PERIOD_INVALID_RANGE',
+
+  /*
+   * Two versions of one rule claim the same effective start (Decision 079;
+   * PFOS-ENG-01 §7, §21.1).
+   *
+   * A collection of one rule's versions holding a duplicate `effectiveFrom` is
+   * invalid regardless of the evaluation date, including a date on which the
+   * duplicate has no effect. Both periods include their shared start, so the two
+   * versions are in effect together on at least that day, and Decision 079
+   * permits nothing to break the tie: an identifier, a version number, a
+   * creation time and storage order are all excluded from selection.
+   *
+   * The same code reports the defensive case. Selection assumes valid input and
+   * is not a validator, but where malformed input leaves more than one currently
+   * effective candidate sharing the greatest `effectiveFrom`, it returns this
+   * rather than choosing one. A selection that returns a version answers only
+   * for that date; it is never a finding that the rest of the history is valid.
+   *
+   * Overlap is not what this reports. Decision 079 permits two versions of a
+   * rule to be in effect at once — §19.2's prospective change requires it, since
+   * an open-ended earlier version cannot be closed after creation — and only a
+   * shared start is rejected.
+   */
+  RULE_VERSION_DUPLICATE_EFFECTIVE_FROM: 'RULE_VERSION_DUPLICATE_EFFECTIVE_FROM',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERROR_CODES)[keyof typeof RULE_ERROR_CODES];
