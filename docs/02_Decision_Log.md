@@ -4512,6 +4512,180 @@ Reconsider when the `Rule` contract is accepted, since multi-version selection t
 
 ---
 
+# Decision 079: Rule Version Selection Uses the Latest Effective Start
+
+**Status:** Accepted
+**Related:** Decisions 006, 018, 022, 023, 068, 073, 074, 075, 076, 077, 078
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+More than one version of a rule may be in effect on an evaluation date. Among the versions of one rule that are in effect, the one with the **latest `effectiveFrom`** applies.
+
+Two versions of the same rule must not share an `effectiveFrom`.
+
+## Overlap is permitted
+
+Decision 078 fixes a version's effective period at creation, and PFOS-ENG-01 §28 offers the author only "effective immediately" or "effective on a future date" — there is no gesture that closes a previous version.
+
+§19.2's worked example is therefore an overlap: v1 is open-ended from January 1, v2 begins April 1, and on April 15 both satisfy `isEffectiveOn`. Because v1's period cannot be changed after creation, that overlap is not merely tolerated — it is the only shape in which the example can exist.
+
+Overlap is consequently valid and expected, and it is required by the existing prospective-change example whenever the earlier version is open-ended. It is not a universal property of every version history: an author who supplied a finite `effectiveTo` when creating a version may produce a history with no overlap at all, and such a history is equally valid. Neither shape is required of a rule, and neither is an error state.
+
+No overlap prohibition, contiguity requirement, or gap prohibition is introduced.
+
+## Open-ended versions
+
+A rule may have any number of open-ended versions. §19.2's example has two. Their starts must differ, and the latest start applies.
+
+## Selection rule
+
+For one `ruleId` and one evaluation date:
+
+1. Take the versions whose period satisfies `isEffectiveOn` (Decision 078).
+2. If none, the rule contributes nothing for that date.
+3. Otherwise the version with the greatest `effectiveFrom` applies.
+
+Selection reads `effectiveFrom` and nothing else. It does not read `ruleId`, `ruleVersionId`, `versionNumber`, `supersedesVersionId`, `currentVersionId`, `createdAt`, array position, or repository order. PFOS-ENG-00 §14 keeps identifiers opaque, §32 Invariant 11 forbids repository order from affecting a result, and Decision 078 forbids an identifier tie-breaker. PFOS-ENG-01 §27's tie-break ladder is not the governing mechanism: it resolves equal *rank or priority* among allocation items, and a rule version has no rank.
+
+`versionNumber` and `supersedesVersionId` are not selection inputs. If §41's conceptual fields are later defined, they are descriptive and audit metadata. Authoring sequence is not effective date: a version authored later may take effect earlier, and Decision 022 makes the effective date the governing fact.
+
+`currentVersionId` is not a selection input either. It carries no date and cannot answer a `HISTORICAL_RECALCULATION` or a backdated evaluation, which Decision 074 requires selection by effective date to do.
+
+Version selection is **intra-rule** and precedes inter-rule precedence. It consults no other rule, no hierarchy level from §6, and classifies no rule as additive or replacing.
+
+## Duplicate effective starts are invalid
+
+Two questions are involved, and they must not be collapsed.
+
+### A. Version-history validity
+
+Two versions belonging to one `ruleId` must not share an `effectiveFrom`. A version collection containing such a duplicate is **invalid, regardless of the evaluation date** — including a date on which the duplicate has no effect, and including every date before either version begins.
+
+This is the only shape that can defeat the selection rule, and it always defeats it on at least one date: both periods include their shared start, and Decision 078's range validator already guarantees `effectiveTo ≥ effectiveFrom`, so two versions sharing a start are simultaneously effective on at least that day with no permitted way to choose between them. Conversely, distinct starts make selection total on every date. Excluding this one shape is therefore exactly sufficient, and nothing narrower would do.
+
+PFOS-ENG-01 §7 makes deterministic rule output a system invariant, and §21.1 makes a rule that violates a system invariant a hard validation error. A version history that is ambiguous on any date fails that invariant, so this is a collection-level invariant rather than a per-period one. It is enforced wherever a rule's versions are held together — at authoring and activation once that layer exists, and on import, which §37 requires the Rule Engine to validate and PFOS-ENG-00 §29.1 treats as untrusted.
+
+The failure reports `RULE_VERSION_DUPLICATE_EFFECTIVE_FROM`, category `VALIDATION`.
+
+### B. Selection defense
+
+Selection assumes valid input. It is not a validator, and it does not scan a collection for duplicates it has no need to compare.
+
+It must nonetheless never guess if malformed input reaches it. If more than one currently effective candidate shares the greatest `effectiveFrom`, selection returns `RULE_VERSION_DUPLICATE_EFFECTIVE_FROM` rather than choosing.
+
+Where selection returns a version, that outcome is an answer to "which version applies on this date" and **is not a finding that the history is valid**. A collection carrying a duplicate elsewhere remains invalid under (A), and the validator remains the authority on that question. Selection's silence about a duplicate it did not have to compare says nothing about it.
+
+One code covers both, because both report the same defect: two versions of one rule claim the same effective start.
+
+Failing loudly is required here rather than warning: the competing versions carry different financial answers, and Constitution Principle 4 forbids silently making that decision — including by silently making it zero.
+
+The `VALIDATION` category matches `RULE_TOP_PRIORITY_DUPLICATE_RANK`, the existing duplicate-detection code. `CONFLICT` was considered; consistency with the sibling code was preferred, and §39's `RuleConflictError` names an error concept rather than one of PFOS-ENG-00 §22's closed categories.
+
+## Zero effective versions
+
+Decision 078 already states that a rule with no version effective on the evaluation date contributes nothing for that date. This decision restates it and changes nothing about it.
+
+It decides nothing about what happens next. Whether a lower-precedence rule, a group default, or the §8.1 product default then supplies a value is precedence and fallback behavior, which is Blocker C, and it remains open. "Contributes nothing" is a statement about the rule, not about the resolved outcome.
+
+## Skipped rules
+
+For this reason code, `skippedRules` is **rule-level**.
+
+A version that is not effective on the evaluation date — whether its period has ended or has not yet begun — does **not** independently produce a `SkippedRule`. It is removed by the `isEffectiveOn` predicate, and a version is not itself a rule.
+
+An older effective version that loses selection to a later `effectiveFrom` does **not** produce a `SkippedRule` either. That rule applied. Which of its versions answered is provenance, carried by `sourceRuleVersionIds` and by `RULE_EXPLAIN_RULE_APPLIED` under Decision 074. No new skip code and no new explanation code is introduced.
+
+Where `RULE_SKIP_NOT_EFFECTIVE_ON_EVALUATION_DATE` is emitted for a rule with zero effective versions, it carries `ruleId` and **omits `ruleVersionId`** — the case for which Decision 074 made that field optional, since no version was applicable to name.
+
+**This decision does not require every rule with zero effective versions to produce a `SkippedRule`.** It fixes the shape of such a record and forbids version-level records; it does not establish when one is emitted, or for which rules. That depends on the resolver, on Blocker C, and on the still-open contract governing which rules the evaluation context supplies — PFOS-ENG-01 §25 lists possible context fields rather than fixing a population. Decision 078 already recorded that emitting this code requires the resolver and remains gated by Blocker C, and that gating is unchanged here.
+
+Confining these records to rule level preserves Decision 074's canonicalization: `skippedRules` ordered by rule identifier remains a total order, because at most one entry per rule can carry this reason. Version-level records would place several entries under one `ruleId` and force a secondary sort key that no accepted source supplies, and the only available key would be an identifier.
+
+## Amendment to PFOS-ENG-01
+
+§19.2's example is clarified rather than changed: v1 and v2 both remain open-ended and both are in effect from April 1 onward, with v2 applying because it starts later. §19.3's user-facing sentence is the correct reading of that outcome. Any reading under which authoring v2 closes v1 is superseded — Decision 078 makes a version's period immutable after creation, and §28 defines no gesture that would perform such a closing.
+
+§41's `versionNumber`, `supersedesVersionId` and `currentVersionId` are unchanged and remain conceptual. This decision records only that none of them participates in selection.
+
+§21.1's enumerated hard-error list gains one condition, duplicate effective starts within one rule, derived from the "rule violates a system invariant" bullet already present there and from §7.
+
+## Unchanged by this decision
+
+The authored `Rule` contract. `ownerType`, `ownerId`, `ruleCategory`, `ruleType`, `status` and `currentVersionId` are untouched; they carry the §6 hierarchy that Blocker C gates.
+
+The `RuleVersion` payload. `configuration`, `versionNumber`, `supersedesVersionId` and `changeReason` are not defined here, and no full `RuleVersion` interface is introduced. Selection needs only `{ ruleVersionId, period }` grouped by `ruleId`, all of which Decision 078 already accepted.
+
+Which rules the evaluation context supplies to resolution, and therefore which rules could ever be reported as contributing nothing.
+
+Plan Snapshot design, persistence schema, runtime freezing, warning-array ordering, Blocker C and Blocker F.
+
+How an open-ended rule is *stopped*. Under Decision 078's immutability, ending a rule whose latest version is open-ended cannot be expressed by the effective period alone. That belongs to `Rule.status` and the authored contract, and is not settled here.
+
+Whether the duplicate-start collection validator, the selection defense, and the selector itself are one function or three. Decision 076's independent-validator framing applies: each answers one question, and no aggregation or ordering contract for concurrent failures is introduced.
+
+## Why
+
+Decision 074 assigned the Rule Engine the job of selecting the applicable rule version by effective date, and Decision 078 supplied the period and the predicate while deferring what happens when more than one version qualifies. That deferral gates the predicate's use on exactly the shape the specification demonstrates: §19.2's prospective change, where an open-ended earlier version and a later version are both in effect.
+
+The corpus does not merely permit that overlap; for that shape it requires it. §19.2 shows an open-ended v1 and a later v2, §28 offers no way to close v1, and Decision 078 forbids changing v1's period after creation. Any decision that prohibits overlap therefore makes the specification's own worked example unrepresentable and blocks the user's core workflow. Histories without overlap remain expressible and valid; they simply are not the shape §19.2 describes.
+
+Given that overlap exists, the answer must be deterministic (Constitution Principle 18) and must not come from an identifier (Decision 078, PFOS-ENG-00 §14). `effectiveFrom` is the only field in the accepted contract that carries the financial meaning of the question, and Decision 022's prospectivity, §19.2's "effective April 1" and §19.3's "changed … on April 1" all say the same thing: the later change is the one in force.
+
+Because a released error code is persisted inside a Plan Snapshot and must not change meaning, the name is fixed by decision rather than chosen in an implementation commit, following Decisions 076 and 077.
+
+## Alternatives Considered
+
+Prohibiting overlap and rejecting it at authoring was rejected: an open-ended earlier version cannot be closed under Decision 078's immutability, and §28 offers no gesture that would close it, so the §19.2 change could not be authored at all.
+
+Prohibiting overlap and rejecting it at resolution was rejected for the same reason, with the failure arriving at the next allocation preview instead — and it would make every historical recalculation across such a change fail.
+
+Selecting by highest `versionNumber`, or by walking the `supersedesVersionId` chain, was rejected. Authoring order is not effective date: a version authored later may take effect earlier, so a correction to an old period would silently override a change the user scheduled for the future. It is insertion order under a field name, which PFOS-ENG-00 §32 Invariant 11 excludes, and PRD §50 states users must not manage version numbers.
+
+Selecting by `Rule.currentVersionId` was rejected: a pointer carries no date and cannot answer a historical or backdated evaluation, which Decision 074 requires.
+
+Breaking an exact `effectiveFrom` tie by `createdAt` was considered. §27 does list a creation timestamp above a stable ID, and §41 already places `createdAt` on `RuleVersion`, so it would not be an invented field. It was rejected because §27 governs equal-rank allocation items rather than version selection; because it makes an authoring artifact financially decisive between two versions the user gave the same effective date, which is more plausibly an authoring mistake than an intent; and because it would draw a payload field into a selection contract this decision must not design. Failing loudly on the ambiguity is the smaller and safer answer.
+
+Breaking a tie by the narrower period, or by treating both versions as applying additively, were rejected: the first invents a specificity semantic no source states, and the second is Blocker C and would produce two competing rates for one obligation.
+
+Treating a duplicate start as invalid only when it affects the evaluation date was rejected. Validity of a version history is not a function of when it is read; a history ambiguous on any date fails §7's determinism invariant, and a rule that resolves today would otherwise become an error on a backdated correction with no intervening change.
+
+Emitting a skip record for every non-effective version was rejected. It would place several entries under one `ruleId`, defeating Decision 074's by-identifier ordering and forcing an identifier as a secondary sort key; it would grow every Plan Snapshot with one entry per historical version per resolution; and it reports a version, while `SkippedRule` names a rule.
+
+Requiring a skip record for every rule with zero effective versions was rejected as premature: it presumes a settled population of rules supplied to the resolver, which §25 does not fix.
+
+Deferring again was rejected: the question is decidable over accepted types, and it blocks the resolver's only date-based responsibility.
+
+## Tradeoffs
+
+An authoring mistake in a date is not caught by resolution. A version wrongly dated far in the future wins as soon as that date arrives, and one wrongly dated in the past loses silently. Both are the correct application of the stated rule; surfacing the mistake belongs to the authoring surface, where §28 already requires impacted future behavior to be shown.
+
+One code serves both a collection validator and a selection guard. The two answer different questions — whether a history is well-formed, and whether this date has one answer — and a caller that sees the code from selection must not conclude the rest of the history has been checked.
+
+The authoring-time enforcement point cannot be implemented in Milestone 2, so the invariant lands in stages, as Decision 076's validation did.
+
+The shape of a zero-effective-version skip record is fixed while its emission is not, so the record type is specified before it has a producer. This matches the position Decisions 074 and 077 already accepted for `RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` and for the §21.2 warnings.
+
+A rule's version history may accumulate versions that can never again be selected, since a later start always wins. Nothing prunes them, and nothing should: §19.1 requires a version used in a confirmed allocation to remain reconstructable.
+
+## Consequences
+
+`RULE_VERSION_DUPLICATE_EFFECTIVE_FROM` joins `RULE_ERROR_CODES`. The four-registry architecture tests from Decisions 073, 074 and 077 cover it unchanged: `RULE_` prefix, key identical to value, neither reserved non-error prefix, disjoint from every other registry.
+
+Milestone 2 may implement a bounded per-rule version selector, its duplicate-start selection guard, and a bounded duplicate-start collection validator over `{ ruleVersionId, period }` — without the authored `Rule` contract and without the full `RuleVersion` payload.
+
+No existing contract, registry value, or `ResolvedRuleSet` field changes. `SkippedRule` is unchanged, and its optional `ruleVersionId` acquires its first specified shape constraint, though not yet a producer.
+
+PFOS-ENG-01 §43.1's "Historical snapshot ignores current rules" and §43.5's snapshot tests become expressible for a multi-version rule, and §19.2's example becomes a directly testable case at three dates.
+
+Blockers C and F remain open and continue to gate the work they name.
+
+## Future Review Trigger
+
+Reconsider if the authored `Rule` contract introduces a lifecycle or status that can end an open-ended version, since stopping a rule would then have a second representation; if a rule type requires sub-day effectivity, which a date-only start cannot order; if multi-time-zone support changes how an evaluation date is compared; when the evaluation-context population contract is settled, since emission of a zero-effective-version skip record then becomes decidable; if a second producer of `RULE_SKIP_NOT_EFFECTIVE_ON_EVALUATION_DATE` appears, since per-rule uniqueness for this reason would then need restating; or if an accepted decision ever permits a version's effective period to be closed after creation, which would reopen whether overlap should be prohibited at authoring.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
