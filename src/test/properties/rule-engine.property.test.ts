@@ -10,11 +10,15 @@ import {
   isEffectiveOn,
   type RuleEffectivePeriod,
 } from '@domain/rules/contracts/rule-effective-period';
+import type { ResolvedSlotKind } from '@domain/rules/contracts/resolved-slot-kind';
 import { precedenceLevelOf, type RuleOwner } from '@domain/rules/contracts/rule-owner';
+import type { RuleStatus } from '@domain/rules/contracts/rule-status';
+import type { Rule } from '@domain/rules/contracts/rule';
 import { RULE_WARNING_CODES } from '@domain/rules/contracts/rule-warning-codes';
 import { RULE_ERROR_CODES } from '@domain/rules/errors/rule-error-codes';
 import { selectRuleVersionEffectiveOn } from '@domain/rules/services/rule-version-selection';
 import { validateAuthoredPoolTotal } from '@domain/rules/validation/authored-percentage-pool';
+import { validateDistinctAuthoredScopes } from '@domain/rules/validation/authored-scope-uniqueness';
 import { validateRuleEffectivePeriod } from '@domain/rules/validation/rule-effective-period';
 import {
   validateDistinctRuleVersionEffectiveStarts,
@@ -38,10 +42,10 @@ import {
  *
  * PFOS-ENG-01 §26 requires that resolution never depend on object iteration
  * order or on random identifiers, and §43.4 asks that repeated and reordered
- * input produce identical output. The nine functions exercised below are the
+ * input produce identical output. The ten functions exercised below are the
  * only Rule Engine behavior accepted so far (Decisions 071, 075, 076, 077,
- * 078, 079, 081), so they are the only place those requirements can be tested
- * today.
+ * 078, 079, 081, 084), so they are the only place those requirements can be
+ * tested today.
  *
  * Example-based coverage already sits beside each function and is not repeated
  * here. This file adds only what an example cannot state: that the
@@ -1227,5 +1231,184 @@ describe('precedenceLevelOf properties', () => {
         expect(precedenceLevelOf(owner)).toBe(precedenceLevelOf(owner));
       }),
     );
+  });
+});
+
+/**
+ * A rule reduced to a seed, so that a generated plan holds deliberate scope
+ * collisions often enough to exercise the rejecting branch.
+ *
+ * Owner identifiers and slot kinds are drawn from small pools for that reason. A
+ * wide pool would make collisions vanishingly rare. Rule identifiers are drawn
+ * widely and independently: Decision 084's key does not contain one, so they
+ * exist here only to be proven irrelevant. The slot-kind pool deliberately
+ * mixes replacing kinds with the exempt GLOBAL_OBLIGATION.
+ */
+interface RuleSeed {
+  readonly ruleId: string;
+  readonly ownerType: RuleOwner['ownerType'];
+  readonly ownerId: string;
+  readonly slotKind: ResolvedSlotKind;
+  readonly status: RuleStatus;
+}
+
+const ruleSeedArbitrary: fc.Arbitrary<RuleSeed> = fc.record({
+  ruleId: fc.string(),
+  ownerType: fc.constantFrom('GLOBAL', 'INCOME_SOURCE', 'BUCKET', 'GROUP'),
+  ownerId: fc.constantFrom('owner-1', 'owner-2'),
+  slotKind: fc.constantFrom('ROLLOVER_POLICY', 'REQUIRED_FUNDING', 'GLOBAL_OBLIGATION'),
+  status: fc.constantFrom('ACTIVE', 'RETIRED'),
+});
+
+function toAuthoredRule(seed: RuleSeed): Rule {
+  return {
+    ruleId: asEntityId(seed.ruleId),
+    owner:
+      seed.ownerType === 'GLOBAL'
+        ? { ownerType: 'GLOBAL' }
+        : { ownerType: seed.ownerType, ownerId: asEntityId(seed.ownerId) },
+    slotKind: seed.slotKind,
+    status: seed.status,
+  };
+}
+
+const authoredPlanArbitrary: fc.Arbitrary<readonly Rule[]> = fc
+  .array(ruleSeedArbitrary, { maxLength: 8 })
+  .map((seeds) => seeds.map(toAuthoredRule));
+
+/**
+ * The authored scope, expressed without any rule identity.
+ *
+ * A joined string is safe *here* in a way it would not be inside the validator:
+ * these owner identifiers come from a two-element pool that contains no
+ * delimiter, so the restatement cannot suffer the collision Decision 084
+ * forbids the implementation to risk against untrusted input.
+ */
+function scopeOf(rule: Rule): string {
+  const owner =
+    rule.owner.ownerType === 'GLOBAL'
+      ? 'GLOBAL'
+      : `${rule.owner.ownerType}:${String(rule.owner.ownerId)}`;
+
+  return `${owner}|${rule.slotKind}`;
+}
+
+/** Restates the invariant independently of the implementation under test. */
+function holdsDistinctActiveScopes(rules: readonly Rule[]): boolean {
+  const scopes = rules
+    .filter((rule) => rule.status === 'ACTIVE' && rule.slotKind !== 'GLOBAL_OBLIGATION')
+    .map(scopeOf);
+
+  return new Set(scopes).size === scopes.length;
+}
+
+describe('validateDistinctAuthoredScopes properties', () => {
+  /*
+   * Decision 082 and Decision 084: the condition is exactly two ACTIVE rules
+   * sharing an authored scope on a non-exempt kind, and nothing else. The
+   * expectation is computed from that definition rather than from the code.
+   */
+  it('accepts a plan exactly when its active authored scopes are distinct', () => {
+    fc.assert(
+      fc.property(authoredPlanArbitrary, (rules) => {
+        expect(validateDistinctAuthoredScopes(rules).ok).toBe(holdsDistinctActiveScopes(rules));
+      }),
+    );
+  });
+
+  /* §26 and §43.4: reordering the collection cannot change the result. */
+  it('returns an identical result for any arrangement of one plan', () => {
+    fc.assert(
+      fc.property(
+        authoredPlanArbitrary.chain((rules) =>
+          fc
+            .shuffledSubarray([...rules], { minLength: rules.length, maxLength: rules.length })
+            .map((shuffled): readonly [readonly Rule[], readonly Rule[]] => [rules, shuffled]),
+        ),
+        ([rules, shuffled]) => {
+          expect(validateDistinctAuthoredScopes(shuffled)).toEqual(
+            validateDistinctAuthoredScopes(rules),
+          );
+        },
+      ),
+    );
+  });
+
+  /*
+   * PFOS-ENG-00 §14 keeps an identifier opaque, and Decision 084's key contains
+   * no rule identity. Renaming every rule must change nothing, including the
+   * reported error, which interpolates no identifier.
+   */
+  it('reads no rule identity', () => {
+    fc.assert(
+      fc.property(authoredPlanArbitrary, fc.string(), (rules, suffix) => {
+        const renamed = rules.map((rule, index): Rule => ({
+          ...rule,
+          ruleId: asEntityId(`${suffix}-${String(index)}`),
+        }));
+
+        expect(validateDistinctAuthoredScopes(renamed)).toEqual(
+          validateDistinctAuthoredScopes(rules),
+        );
+      }),
+    );
+  });
+
+  /*
+   * An owner identifier is opaque, so relabelling every owner consistently
+   * preserves exactly which scopes collide and the verdict must be unchanged.
+   */
+  it('treats owner identifiers as opaque labels', () => {
+    fc.assert(
+      fc.property(authoredPlanArbitrary, fc.string(), (rules, prefix) => {
+        const relabelled = rules.map((rule): Rule => {
+          if (rule.owner.ownerType === 'GLOBAL') {
+            return rule;
+          }
+
+          return {
+            ...rule,
+            owner: {
+              ownerType: rule.owner.ownerType,
+              ownerId: asEntityId(`${prefix}${String(rule.owner.ownerId)}`),
+            },
+          };
+        });
+
+        expect(validateDistinctAuthoredScopes(relabelled)).toEqual(
+          validateDistinctAuthoredScopes(rules),
+        );
+      }),
+    );
+  });
+
+  /* Decision 083: retiring rules can only remove them from the domain. */
+  it('never rejects a plan whose rules are all retired', () => {
+    fc.assert(
+      fc.property(authoredPlanArbitrary, (rules) => {
+        const retired = rules.map((rule): Rule => ({ ...rule, status: 'RETIRED' }));
+        expect(validateDistinctAuthoredScopes(retired).ok).toBe(true);
+      }),
+    );
+  });
+
+  /* Decision 080: the additive kind is exempt at every owner. */
+  it('never rejects a plan holding only global obligations', () => {
+    fc.assert(
+      fc.property(authoredPlanArbitrary, (rules) => {
+        const obligations = rules.map((rule): Rule => ({ ...rule, slotKind: 'GLOBAL_OBLIGATION' }));
+        expect(validateDistinctAuthoredScopes(obligations).ok).toBe(true);
+      }),
+    );
+  });
+});
+
+describe('the authored-scope generator is not vacuous', () => {
+  it('produces both accepted and rejected plans', () => {
+    const plans = fc.sample(authoredPlanArbitrary, { numRuns: 200, seed: 42 });
+    const rejected = plans.filter((rules) => !validateDistinctAuthoredScopes(rules).ok).length;
+
+    expect(rejected).toBeGreaterThan(0);
+    expect(rejected).toBeLessThan(plans.length);
   });
 });

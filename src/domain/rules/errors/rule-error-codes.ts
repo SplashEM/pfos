@@ -18,10 +18,11 @@
  * is already settled by an accepted decision — the two authored-percentage-pool
  * failures assigned to the Rule Engine by Decision 071 "Validation ownership",
  * the two top-priority failures named by Decision 076, the effective-period
- * range failure named by Decision 078, and the duplicate effective start named
- * by Decision 079. The remaining hard-validation codes in PFOS-ENG-01 §21.1
- * arrive with the milestone phase that implements the validation behind them,
- * so that no code is published before the rule it reports is specified.
+ * range failure named by Decision 078, the duplicate effective start named by
+ * Decision 079, and the duplicate authored scope authorised by Decision 084.
+ * The remaining hard-validation codes in PFOS-ENG-01 §21.1 arrive with the
+ * milestone phase that implements the validation behind them, so that no code
+ * is published before the rule it reports is specified.
  */
 export const RULE_ERROR_CODES = {
   /*
@@ -102,6 +103,28 @@ export const RULE_ERROR_CODES = {
    * shared start is rejected.
    */
   RULE_VERSION_DUPLICATE_EFFECTIVE_FROM: 'RULE_VERSION_DUPLICATE_EFFECTIVE_FROM',
+
+  /*
+   * Two active rules claim the same authored scope (Decision 084;
+   * Decision 082; Decision 083; PFOS-ENG-01 §21.1).
+   *
+   * An authored scope is a rule's owner together with its slot kind. Decision
+   * 082 establishes that for the seven replacing slot kinds a given owner has
+   * at most one such setting, so two rules sharing that scope claim one setting
+   * rather than addressing different subjects. Decision 083 supplies the set
+   * the invariant ranges over — the ACTIVE rules of the current authored plan —
+   * and Decision 084 authorises this code.
+   *
+   * `GLOBAL_OBLIGATION` cannot produce this failure. Decision 080 accepts that
+   * separately authored obligations accumulate, and the exemption is a property
+   * of the kind rather than of the owner, so it holds at every owner.
+   *
+   * It reports a structural defect in the current plan, not a dated one. No
+   * evaluation date, rule version or effective period is consulted, and a
+   * retired rule sharing a scope with the rule that replaced it is valid rather
+   * than reportable.
+   */
+  RULE_DUPLICATE_AUTHORED_SCOPE: 'RULE_DUPLICATE_AUTHORED_SCOPE',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERROR_CODES)[keyof typeof RULE_ERROR_CODES];
