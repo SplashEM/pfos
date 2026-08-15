@@ -5771,6 +5771,214 @@ Reconsider if an accepted decision ever defines aggregation or ordering of simul
 
 ---
 
+# Decision 085: Terminating Rule Versions
+
+**Status:** Accepted
+**Related:** Decisions 022, 068, 073, 074, 078, 079, 080, 081, 082, 083, 084
+**Scope:** Financial logic, Architecture, Engineering, Data
+
+## Decision
+
+A rule's contribution is stopped by appending a terminating version to its timeline:
+
+```ts
+export interface TerminatingRuleVersion {
+  readonly kind: 'TERMINATING';
+  readonly ruleVersionId: RuleVersionId;
+  readonly ruleId: RuleId;
+  readonly period: {
+    readonly effectiveFrom: FinancialDate;
+  };
+}
+```
+
+A `RuleVersion` will be a discriminated union on `kind`, whose other arm carries the rule's configuration. Only the terminating arm and its discriminant literal are fixed here. The configured arm, the union name, and any closed `kind` vocabulary belong to the `RuleVersion` payload decision: nothing today requires a closed kind type, and declaring one would close a variant vocabulary this decision has no authority to close.
+
+This discharges the representation Decision 083 deferred.
+
+## Why an explicit discriminated variant
+
+An intentional stop must be explicit and impossible to confuse with incomplete or corrupt data.
+
+A configuration-level `enabled` flag and an absent or nullable configuration were both rejected. Each requires the deferred payload, and the second reads silence — including a truncated import, which PFOS-ENG-00 §29.1 treats as untrusted — as a financial instruction. An independent `terminatesRule` boolean was rejected because a version could carry it alongside a live configuration, the two-fields-that-can-disagree hazard Decision 081 rejected for a stored precedence level and Decision 083 rejected for a dated status. A separate stop entity outside the version timeline was rejected because Decision 083 requires the stop to live in that timeline, and a second timeline reintroduces the same hazard.
+
+PFOS-ENG-01 §47.8 requires discriminated unions rather than loosely structured objects, and Decisions 074 and 081 use that shape throughout.
+
+A terminating version carries no configuration field at all, so a terminating version holding financial configuration is unrepresentable rather than merely invalid.
+
+## Field names are fixed by shipped code
+
+The period field is named `period`, not `effectivePeriod`, matching the shipped `RuleVersionEffectivePeriodLike`, whose documentation records that a future `RuleVersion` will satisfy it structurally without either type changing.
+
+Because `selectRuleVersionEffectiveOn` is generic over that shape and returns the caller's own object, a terminating version flows through Decision 079 selection with no change to Decision 079 and no change to its implementation.
+
+## A stop is open-ended
+
+A terminating version carries `effectiveFrom` and no `effectiveTo`, and its narrowed period makes carrying one unrepresentable. A bounded terminating version is not permitted.
+
+The reason is a concrete hazard rather than a preference. A bounded stop would drop out of `isEffectiveOn` when its bound elapsed, leaving an older open-ended configured version as the only effective candidate, so under Decision 079 that older version would be selected again and terms the user stopped would resume with no authored act at any point. That is a silent financial decision under Constitution Principle 4 and an unauthored change under Decision 022. Permitting both forms would also give two ways to express one timeline, one of them carrying that hazard.
+
+Resumption is always an explicit later configured version. Because the constraint is structural, no validator and no error code is introduced for it.
+
+## Stopping is prospective
+
+Decision 083 requires a stop to be prospective. §28's two gestures map directly: effective immediately is a stop dated today, and effective on a future date is a stop dated then. There is no retrospective-stop gesture.
+
+This constrains stop authoring semantics specifically. It does not amend Decision 078's general `RuleVersion` date validity: Decision 078 permits a past `effectiveFrom` by declining to prohibit it, and Decision 083 supplied the prohibition for stops.
+
+Prospectivity is checked when a stop is authored, against a supplied authoring date. It is not a property of stored history and must not become one. The domain may not read a clock (PFOS-ENG-00 §13.4), and a stop authored today is in the past tomorrow, so a stored-history validator comparing old stops against "now" would reject every historical stop a day after it was authored. No authoring layer is implemented here, so the check is deferred with it.
+
+## Selection and meaning
+
+Decision 079 is unchanged. It selects the version with the latest `effectiveFrom` among the versions in effect. Before the stop date the previous version is the only effective candidate; from the stop date onward both are effective and the later start wins, which Decision 079 records as the ordinary shape. Their starts differ, so the duplicate-start validator is satisfied without change.
+
+What a selected version means belongs to this contract rather than to Decision 079, which selects but does not materialize:
+
+- a selected `CONFIGURED` version contributes its configuration;
+- a selected `TERMINATING` version means the rule contributes nothing for that date.
+
+This is post-selection meaning. It does not amend the Decision 079 selection algorithm.
+
+## Two states that are not the same
+
+A rule with **no effective version**, where selection returns nothing, and a rule whose **effective version terminates it** both contribute nothing. They are not the same state, and they must not be merged.
+
+Only the second records an authored, dated act. The first says only that the timeline covers nothing on that date.
+
+## Temporary stopping
+
+A stop followed by a later configured version is a temporary stop, and the interruption is visible in the timeline rather than concealed. No `Rule.status` change is required for a temporary stop, and several terminating versions may occur over one rule's lifetime.
+
+```text
+v1 CONFIGURED   effectiveFrom 2026-01-01
+v2 TERMINATING  effectiveFrom 2026-06-01
+v3 CONFIGURED   effectiveFrom 2026-09-01
+
+January–May    v1 contributes
+June–August    v2 is selected; the rule contributes nothing
+September on   v3 contributes
+```
+
+## Retirement
+
+A `RETIRED` rule must have at least one `RuleVersion`, and the version with the greatest `effectiveFrom` must be `TERMINATING`.
+
+The consequences are:
+
+- `RETIRED` with zero versions is invalid;
+- `RETIRED` over a configured-only history is invalid;
+- configured January, then terminating June, then `RETIRED` is valid;
+- configured January, terminating June, configured September, then `RETIRED` is invalid;
+- configured January, terminating June, configured September, terminating December, then `RETIRED` is valid, because the June stop was temporary and the December stop is the retirement.
+
+No zero-version exception is made. Decision 083 states that a rule may not become `RETIRED` unless a dated stop is represented in its version timeline, and an empty timeline represents none. Nothing is blocked by this: such a rule is retired by first appending a terminating version, which requires no predecessor, and the result records the date the rule left the plan.
+
+A history whose latest-start version is configured is invalid because the rule would contribute again after retirement, contradicting Decision 083's terminality.
+
+The greatest `effectiveFrom` is unique once Decision 079's duplicate-effective-start invariant holds, so this invariant is well defined for valid histories and composes after that check rather than replacing it.
+
+## A future-dated permanent stop
+
+A permanent terminating version may be scheduled for a future date. While a configured version still governs the current date, `Rule.status` remains `ACTIVE`, and `RETIRED` must not become true before the permanent terminating version is in force.
+
+Decision 083 defines status as membership of the user's current authored plan, and a rule whose configured version still governs is part of that plan. Marking it retired would assert something false about the present.
+
+The constraint is one-directional. `RETIRED` requires the permanent stop to be in force; the converse is not required. A terminating version may be in force while `Rule.status` remains `ACTIVE`, which is exactly the valid temporary-stop state.
+
+No automatic status transition at the stop date is implied or required by this decision. Who or what performs `ACTIVE` to `RETIRED` remains deferred to authoring, orchestration and persistence design, which Decision 083 already places outside the domain. Status still carries no date and none is stored beside it: the timeline invariant above is date-free, and the timing constraint is a condition on when `RETIRED` may be true rather than a property stored on the value.
+
+## Why retirement cannot be established early
+
+Decision 084 validates authored-scope uniqueness over the `ACTIVE` rules of the current authored plan.
+
+If a rule were marked `RETIRED` while its configured version still governed the current date, it would leave that uniqueness domain while still contributing financially, and a replacement `ACTIVE` rule could claim the same authored scope too early. Two rules would then contribute at one authored scope, which Decision 082 characterizes as semantically invalid, and the uniqueness validator could not see it.
+
+A rule that is merely stopped and still `ACTIVE` remains inside the uniqueness domain, which is correct: the user has stopped the rule without removing it from the plan, so the authored scope is still claimed.
+
+## Enforcement is deferred
+
+No validator and no error code is authorised here for the prospectivity constraint or for the retirement invariant.
+
+The retirement check spans a rule together with its versions, and no accepted contract pairs them: `validateDistinctRuleVersionEffectiveStarts` takes versions alone and `validateDistinctAuthoredScopes` takes rules alone. The prospectivity check requires an authoring layer that supplies the authoring date, and none exists.
+
+## Skip codes
+
+`RULE_SKIP_NOT_EFFECTIVE_ON_EVALUATION_DATE` must not describe a selected terminating version. Its registered meaning is that no version was in effect on the evaluation date; in this case a version is effective and is selected.
+
+Whether a selected stop emits another skip, emits an explanation, or remains silent depends on the resolver and on evaluation-context population, which remain open. No code is introduced and no existing code is reinterpreted.
+
+## Provenance is deferred
+
+Whether a selected terminating version's identifier belongs in `sourceRuleVersionIds` is not settled here, and Decision 074 is not amended.
+
+The tension is recorded rather than resolved. Decision 074 defines that field as naming the versions that produced the resolved values, and a terminating version produces an absence rather than a value. Constitution Principle 12 requires a user to determine which rule version was used, which pulls the other way. The field is flat, de-duplicated and sorted, so an entry that produced no value would be indistinguishable from one that did. The question is entangled with Blocker C and with the provenance gap Decision 081 recorded, and adopting inclusion would require amending Decision 074 and changing `schemaVersion`.
+
+## Deliberately deferred
+
+- The configured `RuleVersion` payload, the full `RuleVersion` union, and any closed `RuleVersion` kind vocabulary.
+- `sourceRuleVersionIds` treatment for a stop.
+- Skip and explanation emission for a stop.
+- The prospectivity check and the authoring layer that supplies its date.
+- The retirement invariant's validator and any error code it would report.
+- The mechanics of the `ACTIVE` to `RETIRED` transition.
+- Owner-and-kind authoring legality.
+- Resolver population, Blocker C and Blocker F.
+- `ResolvedGlobalObligation.sequence` and `ResolvedFundingRule.sequence`.
+- Product-default provenance.
+- Plan Snapshot implementation, and all Milestone 3 behavior.
+
+## Why
+
+Decision 083 fixed that a stop must be prospective, dated, append-only and non-mutating, and deferred only its representation. Decision 079 establishes that a rule with zero effective versions contributes nothing, but it does not establish an effective version that means "contributes nothing"; that is the semantic this decision supplies.
+
+The smallest representation that cannot be confused with missing data is an explicit variant. Every alternative either depends on the deferred payload or admits a state where a stop and a configuration coexist, and in a system asserting money to the cent, silence must never read as an instruction.
+
+The remaining clauses follow from that choice. An open-ended stop follows from Decision 079's selection rule, since any bound would hand the answer back to an older version. The retirement invariant follows from Decision 083's terminality. The timing constraint on `RETIRED` follows from Decision 083's definition of status together with Decision 084's uniqueness domain.
+
+## Alternatives Considered
+
+A nullable or absent configuration meaning "stop" was rejected: §29.1 treats imported content as untrusted, and a truncated record would become a deliberate financial stop.
+
+A `configuration.enabled` flag was rejected: it requires the deferred payload, and every future payload would repeat the flag. PFOS-ENG-01 §12.2 lists enablement among the tithing rule's configurable fields, which is the only corpus evidence for it, and it concerns one category's configuration rather than version lifecycle.
+
+An independent `terminatesRule` boolean was rejected: it permits a terminating version that also carries configuration.
+
+A separate stop entity or second timeline was rejected: Decision 083 requires the stop to be an event in the version timeline.
+
+`effectivePeriod` as the field name was rejected because shipped code fixes `period`, and changing it would break a documented structural promise.
+
+Introducing `RuleVersionKind` or the full `RuleVersion` union now was rejected as premature: nothing today requires a closed kind vocabulary, and Decision 081 declined an unnecessary vocabulary on the same grounds.
+
+A bounded terminating version was rejected for the silent-resumption hazard recorded above.
+
+A zero-version exception to the retirement invariant was rejected: it would add to Decision 083 rather than apply it, and it is unnecessary because a terminating version can always be appended first.
+
+Permitting `RETIRED` while a configured version still governs was rejected for the Decision 084 interaction recorded above. Decision 083's wording alone does not settle it; the consequence does.
+
+## Tradeoffs
+
+The terminating variant is fixed while the configured variant is not, so the `RuleVersion` union arrives across two decisions.
+
+The terminating variant's period is narrower than `RuleEffectivePeriod`, so the two variants are not perfectly symmetric. That asymmetry is what removes a validator, an error code and a financial hazard.
+
+Two retirement conditions are stated before either is enforceable, so the invariant is known ahead of its validator, as Decision 082's uniqueness condition was.
+
+A user who schedules a future permanent stop must still have `RETIRED` established separately once it is in force, and no mechanism for that is designed here.
+
+## Consequences
+
+`TerminatingRuleVersion` may be implemented in Milestone 2, with no change to Decision 079's implementation and no change to any existing contract, registry or `ResolvedRuleSet` field.
+
+Decision 083's stopping constraint becomes satisfiable in code, and its retirement precondition becomes statable as the invariant above.
+
+No error code is registered and no validator is authorised.
+
+## Future Review Trigger
+
+Reconsider when the `RuleVersion` payload decision supplies the configured arm, since the union and any kind vocabulary are formed then; when a contract pairing a rule with its versions exists, since both retirement conditions become enforceable; when an authoring layer exists, since prospectivity becomes checkable; when evaluation-context population and Blocker C are settled, since skip emission and provenance for a stop become determinable; or if a future variant of `RuleVersion` is required beyond configured and terminating.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
