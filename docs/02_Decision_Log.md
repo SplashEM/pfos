@@ -5181,6 +5181,199 @@ Reconsider when Rule authoring granularity is settled, since the exact address, 
 
 ---
 
+# Decision 082: Rule Authoring Granularity for Bucket-Bearing Slot Kinds
+
+**Status:** Accepted
+**Related:** Decisions 013, 014, 020, 022, 028, 068, 071, 073, 074, 075, 076, 078, 079, 080, 081
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+`TOP_PRIORITIES` and `LOWER_PRIORITY_POOL` are each authored as **one Rule per owner**, whose `RuleVersion` configuration carries the strategy together with the whole set of member buckets.
+
+`REQUIRED_FUNDING` is authored **only by a bucket**, one Rule per bucket.
+
+A bucket identifier is stable Rule addressing only where it is the rule's owner. Everywhere else a bucket identifier is versioned configuration or a derived scope.
+
+This settles the granularity Decision 081 named as its next required decision.
+
+## TOP_PRIORITIES
+
+Owner `GLOBAL`. One Rule. Its configuration carries the strategy and the member buckets with their ranks or shares.
+
+PFOS-ENG-01 §42.2 and §42.3 already show exactly this shape. The deciding evidence is not their convenience but §13.3: a `PERCENTAGE_SPLIT` is an authored percentage pool that must total exactly 10,000 basis points, and Decision 071 assigns that cross-entry invariant to the Rule Engine precisely because, as the implemented validator records, a single share cannot express it — it is a property of the collection. Per-bucket authoring would leave §13.3 unstatable, and §15.1 expressly says a single rate carries no sum requirement.
+
+§13.1's remaining validations point the same way. "More than three top priorities" and "Duplicate priority positions" are properties of a set, and §21 frames validation as occurring on a configuration before activation.
+
+Decision 074 makes the strategy and the membership inseparable: the entry type is a function of the strategy, since `ResolvedTopPriorityShare` exists only under `PERCENTAGE_SPLIT`. Strategy and membership are therefore one logical Rule, not two.
+
+Member bucket identifiers, ranks and shares are versioned configuration.
+
+Changing the set, the order, or the shares of priority buckets creates a new `RuleVersion` of the same Rule. It creates no new Rule and deletes none. It is an ordinary edit under §18 and §19.2, and Decision 022 makes it prospective.
+
+### Clarification of §5.3
+
+§5.3 lists "Priority rank" and "Custom allocation percentage" among rules attached to an individual bucket.
+
+This decision authoritatively clarifies their authoring meaning. Both name bucket-level properties and effects: a bucket does have a priority rank, and it does have a share under a percentage split. Their values are authored inside the plan-level `TOP_PRIORITIES` `RuleVersion` configuration rather than in a rule attached to the bucket. They are not separate bucket-owned top-priority Rules.
+
+Decision 068 places the accepted Decision Log above PFOS-ENG-01, so this clarification governs implementation.
+
+A later editorial update to §5.3, restating those bullets as bucket-level effects rather than as separately authored bucket rules, is recommended. That documentation cleanup is not part of this decision and changes nothing here.
+
+A further reason to prefer this reading: under Decision 080's replacing semantics, a bucket-owned membership rule at level 6 would displace a global strategy rule at level 8 rather than combine with it, which no source intends.
+
+## LOWER_PRIORITY_POOL
+
+One Rule per owner, whose configuration carries the strategy and the whole destination set with any shares or fixed amounts.
+
+§14.3 requires an authored lower-priority percentage split to total exactly 10,000 basis points within its allocation pool — the same collection invariant. Decision 074 again makes the destination type a function of the strategy. And `ResolvedPoolFixedAmount.sequence` is a cross-destination competition order, which no bucket-owned rule could supply because no bucket knows its competitors.
+
+A global pool Rule holds the default set. §14.1's even split remains Decision 014's product default where no such rule exists.
+
+An income-source override is a whole-pool configuration, not a per-bucket override, and it replaces the global pool under Decision 080. This is the reading §5.2's "a different set of eligible buckets" requires.
+
+Bucket eligibility is not one Rule per bucket. §14.2's "Bucket-specific eligibility" and "Exclusions" are expressed by membership and non-membership in the pool configuration. There is no per-bucket pool Rule authoring.
+
+Destination bucket sets, shares, fixed amounts and order are versioned configuration.
+
+Every owner authors a whole pool. Granularity does not vary by owner level for this kind.
+
+### An unresolved corpus fragment
+
+§5.4 lists "Default lower-priority allocation treatment" among group rules. §14 never mentions groups and the bullet is elaborated nowhere. Group-level authoring of this kind is not established for V1, and this decision invents no semantics for it.
+
+### A corrected reading
+
+§5.3's "Eligibility for leftover funds" concerns §16's Leftover Allocation Policy, which is a different slot kind. It is not evidence about the lower-priority pool.
+
+## REQUIRED_FUNDING
+
+Authored only by a bucket. `GROUP`, `GLOBAL` and `INCOME_SOURCE` do not author funding rules or funding defaults in V1.
+
+§15 states the requirement of the bucket: "Every allocatable bucket must use one supported funding rule." Every field in §15.1 through §15.8 is an irreducibly per-bucket value — target amount, due date, current reserved balance, monthly minimum, deadline, minimum payment — so a higher-level default carrying one of them would be meaningless for its children. §5.3 carries the funding-shaped fields, and neither §5.1's nor §5.4's example list contains a per-bucket funding rule.
+
+§8.4's generic "applicable global or group defaults" is not treated as authorising funding defaults. No funding-specific source supports it.
+
+The funding type or strategy and its values remain `RuleVersion` configuration, as Decision 081 established.
+
+### Two consequences
+
+`ResolvedFundingRule.sequence` cannot come from a funding rule's own configuration, because a bucket-owned rule cannot know its competitors. This decision excludes that source and identifies no other. The ordering source remains open.
+
+§15's "must use one" can only be satisfied by authoring, since no higher owner and no accepted product default supplies a funding rule. Whether that becomes a plan-completeness rule belongs to the terminal-default decision, which this decision does not settle.
+
+## Stable addressing versus versioned configuration
+
+A bucket identifier is stable Rule addressing only where it is the rule's owner — `REQUIRED_FUNDING`, and `ROLLOVER_POLICY` and `GOAL_POLICY` when bucket-owned.
+
+Everywhere else a bucket identifier is versioned configuration or a derived scope. Sets of target buckets, priority ranks and order, percentage shares, fixed amounts, funding and policy types, eligibility, and destinations are all versioned configuration. §12.2 already lists a destination bucket among configurable fields.
+
+## The complete authored Rule address
+
+Decision 081's `owner` together with `slotKind` completely identifies an authored Rule's V1 scope. No additional stable `Rule` field is required, and none is introduced.
+
+That authored scope projects to resolved output in three ways:
+
+- for a plan-level kind, the authored scope corresponds directly to the resolved field, because the kind has no bucket subject;
+- for a `BUCKET`-owned keyed kind, `ownerId` gives the exact bucket, so the authored scope names one bucket-keyed resolved entry;
+- for a `GROUP`-owned or `GLOBAL`-owned scope default, the authored scope names a default rather than a destination, and its concrete bucket-keyed resolved addresses are derived later, from the authored scope together with membership and bucket state supplied in the evaluation context.
+
+The authored address is therefore complete while the resolved address, for scope defaults, is not yet determinable from the `Rule` alone. That is a property of inheritance, which Decision 080 already governs, rather than a gap in addressing.
+
+This is a complete authored Rule address. It is not an exact resolved address for scope defaults.
+
+This decision does not settle evaluation-context population. It records that scope defaults depend on it, and nothing more.
+
+## Same-level contention
+
+The question Decision 080 deferred to Decision 081, and Decision 081 deferred to here, is now characterized in its authored form.
+
+For the seven replacing kinds, two Rules sharing `(ownerType, ownerId, slotKind)` are semantically invalid. That tuple is a complete authored-scope key rather than an exact resolved bucket address, and the argument is made of the scope: a given owner has at most one such setting. §15 states it literally for funding; §13 and Decision 013 give the plan one top-priority plan; §14.3 one authored pool; §16.1 and Decision 020 one leftover policy; §17.1 and Decision 028 one rollover policy for a bucket, one default for a group, one default for the plan; §5.7 with Decisions 025, 026 and 027 one goal policy.
+
+Granularity is what makes the key complete: for these kinds, no owner authors per-bucket targets except where the bucket is itself the owner, so two Rules at one owner and kind claim the same scope rather than different subjects. That was the objection Decision 081 recorded, and it no longer applies.
+
+`GLOBAL_OBLIGATION` is exempt. More than one Rule at the same owner remains valid there, with the resolver semantics Decision 080 already accepted: separately authored obligations accumulate.
+
+The key is structural, stated over stable `Rule` fields alone. `RuleVersion` effectiveness is not required, because two rules claiming one authored scope are meaningless whether or not their versions overlap.
+
+### No validator and no error code
+
+The condition is characterized but its domain is not. `Rule.status` is undefined, so whether a retained superseded or archived Rule may legitimately share an authored scope with its replacement is unknown, and an unconditional invariant over all Rules could wrongly reject a valid plan.
+
+Decision 073's convention is that a code is named once the behavior it reports is specified. The behavior is not yet fully specified, so no validator is authorised and no error code is registered or named. `Rule.status` and lifecycle are not introduced here, and they still determine the set of Rules over which this uniqueness is enforceable.
+
+## ResolvedSlotKind is unchanged
+
+Decision 081 recorded that `TOP_PRIORITIES` and `LOWER_PRIORITY_POOL` might need to split into strategy and membership kinds if per-bucket authoring were chosen. It is not chosen, so both remain one kind and no member splits.
+
+Splitting either would sever a discriminated union whose entry type depends on its strategy.
+
+Decision 081's eight members stand unchanged. The migration risk it disclosed is discharged rather than realised, and no amendment to Decision 081 is required.
+
+## Deliberately deferred
+
+- The full `RuleVersion` configuration payload, now scoped by this decision.
+- `Rule.status`, lifecycle, and stopping an open-ended rule, which also gate the uniqueness validator and its code.
+- `ResolvedGlobalObligation.sequence`, and `ResolvedFundingRule.sequence` beyond the exclusion recorded above.
+- Missing product-default values, product-default provenance, and Decision 081's `ruleVersionId` gap. Decision 074 is not amended here.
+- Blocker F.
+- Evaluation-context population, including the membership and bucket state on which scope defaults depend.
+- Whether §5.4's group lower-priority bullet has any V1 meaning.
+- Explanation multiplicity, Plan Snapshot design, simulation overrides, event overrides, cycles, runtime freezing, warning-array ordering, and all Milestone 3 behavior.
+
+## Why
+
+Decision 081 settled ownership and slot kind but could not settle addressing beyond the kind, because for three kinds the corpus did not say whether a target bucket was the rule's owner or its configuration. It named that as the next required decision.
+
+The corpus does answer it, through the accepted decisions rather than through the two competing §5 and §42 readings, which sit at the same authority level. Decision 071's authored-pool invariant, Decision 074's strategy-dependent entry types, and the shipped authored-pool validator all require that a pool be one authored collection. §15 states the opposite granularity for funding, of the bucket, in words.
+
+What that yields is a complete authored address rather than a complete resolved one. For scope defaults the resolved destinations still depend on evaluation context, and claiming otherwise would quietly settle a contract this decision must leave open.
+
+## Alternatives Considered
+
+Per-bucket authoring of top priorities, following §5.3's bullets, was rejected: it makes §13.3's authored pool and §13.1's set validations unstatable, and it puts a bucket rule at level 6 in a position to displace a global strategy rule at level 8.
+
+A hybrid of a plan-level strategy Rule plus per-bucket membership Rules was rejected: Decision 074 makes the entry type depend on the strategy, so the two cannot be authored independently.
+
+Per-bucket authoring of lower-priority pool membership was rejected for the same reasons, with `ResolvedPoolFixedAmount.sequence` as an additional obstacle.
+
+Per-bucket income-source overrides of pool membership were rejected: §5.2 describes a different set.
+
+Group or global authoring of funding defaults was rejected: no funding-specific source supports it, and §15's field lists are per-bucket values.
+
+Describing `owner` together with `slotKind` as an exact resolved address was considered and rejected. It holds for plan-level and bucket-owned kinds but not for group-owned or global-owned scope defaults, whose concrete destinations depend on evaluation context, and asserting it would have implied a settlement this decision does not make.
+
+Adopting a uniqueness validator and registering its error code now was considered. The key is complete, but the set of rules it ranges over is not, and naming a code before its condition is fully characterized is the error Decisions 080 and 081 both declined.
+
+## Tradeoffs
+
+§5.3's wording continues to invite a per-bucket authoring reading until it is editorially updated, even though this decision governs implementation under Decision 068.
+
+Editing one member of a top-priority set rewrites a configuration containing all of them, so a version diff is coarser than a per-bucket model would produce.
+
+A same-level uniqueness key is complete but cannot yet be enforced, so the invariant is known before it is checkable.
+
+`ResolvedTopPriorityEntry.ruleVersionIds` and `ResolvedPoolDestination.ruleVersionIds` are plural but will carry a single element in V1. The shape is satisfied and Decision 074 needs no change.
+
+## Consequences
+
+Decision 081's `owner` together with `slotKind` becomes a complete authored Rule address for all eight slot kinds, with no new field. Concrete bucket-keyed resolved addresses for group-owned and global-owned scope defaults are projected later from the evaluation context.
+
+Decision 081's `ResolvedSlotKind` is confirmed unchanged, and its disclosed split-and-migrate risk is closed.
+
+Same-level contention is characterized in its authored form: semantically invalid for the seven replacing kinds, valid and already-specified for the additive one.
+
+No validator is authorised, no code registry changes, and no `ResolvedRuleSet` field changes.
+
+Blocker F remains open.
+
+## Future Review Trigger
+
+Reconsider when `Rule.status` is defined, since the uniqueness invariant then becomes enforceable; when the `RuleVersion` payload is designed; if an accepted source ever authorises funding defaults above the bucket, or gives §5.4's group lower-priority bullet a meaning; if a future slot kind lets a non-owner name subjects in its configuration, since the authored-address projection would then need revisiting; or when §5.3 receives the recommended editorial update.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
