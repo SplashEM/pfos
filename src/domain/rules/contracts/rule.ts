@@ -1,10 +1,12 @@
 import type { ResolvedSlotKind } from './resolved-slot-kind';
 import type { RuleId } from './rule-identifiers';
 import type { RuleOwner } from './rule-owner';
+import type { RuleStatus } from './rule-status';
 
 /**
- * An authored rule: its stable identity, its owner, and the kind of resolved
- * structure it contributes to (Decision 081; Decision 082).
+ * An authored rule: its stable identity, its owner, the kind of resolved
+ * structure it contributes to, and whether it belongs to the current plan
+ * (Decision 081; Decision 082; Decision 083).
  *
  * A `Rule` is the stable logical rule. It persists across edits, and each edit
  * creates a new `RuleVersion` rather than mutating the historical meaning of the
@@ -13,10 +15,21 @@ import type { RuleOwner } from './rule-owner';
  * logical rule rather than retroactively changing what every historical version
  * governed, which §19.1 forbids.
  *
- * These three fields are the whole of the stable authored rule, and together
- * `owner` and `slotKind` completely identify its V1 authored scope
- * (Decision 082). Everything else is versioned configuration, derived, or not
- * yet decided:
+ * `status` is the one field that is not addressing. It records whether the rule
+ * belongs to the user's current authored plan or is retained only as historical
+ * and audit state (Decision 083). It carries no date, it is not a
+ * version-selection input, and it is not read during resolution: current status
+ * is not historical financial truth, so a `RETIRED` rule must not be excluded
+ * from resolution for an earlier evaluation date.
+ *
+ * Decision 083 names the authored-scope uniqueness domain as the one structural
+ * use of `status`, but authorising that validator and naming the code it reports
+ * belong to a separate decision, so neither exists yet and nothing here reads
+ * `status`.
+ *
+ * These four fields are the whole of the authored rule, and together `owner` and
+ * `slotKind` completely identify its V1 authored scope (Decision 082).
+ * Everything else is versioned configuration, derived, or not yet decided:
  *
  * - a bucket identifier is stable addressing only where it is the rule's owner,
  *   so a top-priority member set, a pool's destinations, shares, ranks, fixed
@@ -39,15 +52,18 @@ import type { RuleOwner } from './rule-owner';
  * depend on the evaluation context, which is a property of inheritance under
  * Decision 080 rather than a gap here (Decision 082).
  *
- * No uniqueness invariant is stated or enforced over these fields. Decision 082
- * characterizes the condition but authorises no validator and registers no error
- * code, because `Rule.status` and lifecycle — which determine the set of rules
- * such a check would run over — are undefined and deliberately not introduced
- * here, along with `currentVersionId`, `versionNumber`, `supersedesVersionId`,
- * `changeReason` and the `RuleVersion` configuration payload.
+ * No dated lifecycle field is added. Decision 083 requires a stop to be a
+ * prospective, dated, append-only event in the version timeline, so no
+ * `retiredAt`, `stoppedAt` or retirement effective date belongs here — that
+ * would be a second dated dimension beside the version period, the hazard
+ * Decision 081 rejected for the precedence level. The terminating
+ * representation itself is deferred to the `RuleVersion` payload decision, as
+ * are `currentVersionId`, `versionNumber`, `supersedesVersionId` and
+ * `changeReason`.
  */
 export interface Rule {
   readonly ruleId: RuleId;
   readonly owner: RuleOwner;
   readonly slotKind: ResolvedSlotKind;
+  readonly status: RuleStatus;
 }

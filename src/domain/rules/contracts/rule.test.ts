@@ -9,22 +9,40 @@ const BUCKET_FUNDING_RULE: Rule = {
   ruleId: asEntityId('rule-1'),
   owner: { ownerType: 'BUCKET', ownerId: asEntityId('bucket-1') },
   slotKind: 'REQUIRED_FUNDING',
+  status: 'ACTIVE',
 };
 
 describe('Rule', () => {
-  it('carries exactly the three stable fields fixed by Decision 081', () => {
-    expect(Object.keys(BUCKET_FUNDING_RULE)).toEqual(['ruleId', 'owner', 'slotKind']);
+  it('carries exactly the four fields fixed by Decisions 081 and 083', () => {
+    expect(Object.keys(BUCKET_FUNDING_RULE)).toEqual(['ruleId', 'owner', 'slotKind', 'status']);
   });
 
   /*
    * The Record is over `keyof Rule`, which the compiler requires to hold exactly
-   * one key per field: a fourth field would leave a key missing here and a
+   * one key per field: a fifth field would leave a key missing here and a
    * removed one would leave a key excess. This states the shape of the type
    * rather than of the value above, without inspecting source text.
    */
-  it('names no field beyond those three in its type', () => {
-    const fields: Record<keyof Rule, true> = { ruleId: true, owner: true, slotKind: true };
-    expect(Object.keys(fields).sort()).toEqual(['owner', 'ruleId', 'slotKind']);
+  it('names no field beyond those four in its type', () => {
+    const fields: Record<keyof Rule, true> = {
+      ruleId: true,
+      owner: true,
+      slotKind: true,
+      status: true,
+    };
+    expect(Object.keys(fields).sort()).toEqual(['owner', 'ruleId', 'slotKind', 'status']);
+  });
+
+  /*
+   * Decision 083: the status is required, and it records current authored-plan
+   * membership rather than a date. Both members are accepted here; neither is
+   * read by anything in this contract.
+   */
+  it('accepts either lifecycle status', () => {
+    const active: Rule = { ...BUCKET_FUNDING_RULE, status: 'ACTIVE' };
+    const retired: Rule = { ...BUCKET_FUNDING_RULE, status: 'RETIRED' };
+
+    expect([active.status, retired.status]).toEqual(['ACTIVE', 'RETIRED']);
   });
 
   /*
@@ -37,12 +55,14 @@ describe('Rule', () => {
       ruleId: asEntityId('rule-2'),
       owner: { ownerType: 'GLOBAL' },
       slotKind: 'TOP_PRIORITIES',
+      status: 'ACTIVE',
     };
 
     expect(rule).toEqual({
       ruleId: 'rule-2',
       owner: { ownerType: 'GLOBAL' },
       slotKind: 'TOP_PRIORITIES',
+      status: 'ACTIVE',
     });
   });
 
@@ -66,9 +86,10 @@ describe('Rule', () => {
       ruleId: asEntityId('rule-3'),
       owner: { ownerType: 'INCOME_SOURCE', ownerId: asEntityId('income-1') },
       slotKind: 'LOWER_PRIORITY_POOL',
+      status: 'ACTIVE',
     };
 
-    expect(Object.keys(rule)).toEqual(['ruleId', 'owner', 'slotKind']);
+    expect(Object.keys(rule)).toEqual(['ruleId', 'owner', 'slotKind', 'status']);
   });
 
   /*
@@ -84,16 +105,19 @@ describe('Rule', () => {
         ruleId: asEntityId('rule-bucket'),
         owner: { ownerType: 'BUCKET', ownerId: asEntityId('bucket-1') },
         slotKind: 'ROLLOVER_POLICY',
+        status: 'ACTIVE',
       },
       {
         ruleId: asEntityId('rule-group'),
         owner: { ownerType: 'GROUP', ownerId: asEntityId('group-1') },
         slotKind: 'ROLLOVER_POLICY',
+        status: 'ACTIVE',
       },
       {
         ruleId: asEntityId('rule-global'),
         owner: { ownerType: 'GLOBAL' },
         slotKind: 'ROLLOVER_POLICY',
+        status: 'ACTIVE',
       },
     ];
 
@@ -115,12 +139,21 @@ const COMPILE_TIME_ONLY: boolean = false;
 if (COMPILE_TIME_ONLY) {
   acceptsRule(
     // @ts-expect-error - Decision 081: a rule names the kind of structure it contributes to.
-    { ruleId: asEntityId('rule-1'), owner: { ownerType: 'GLOBAL' } },
+    { ruleId: asEntityId('rule-1'), owner: { ownerType: 'GLOBAL' }, status: 'ACTIVE' },
   );
 
   acceptsRule(
     // @ts-expect-error - Decision 081: a rule names its owner.
-    { ruleId: asEntityId('rule-1'), slotKind: 'LEFTOVER_POLICY' },
+    { ruleId: asEntityId('rule-1'), slotKind: 'LEFTOVER_POLICY', status: 'ACTIVE' },
+  );
+
+  acceptsRule(
+    // @ts-expect-error - Decision 083: a rule carries its lifecycle status.
+    {
+      ruleId: asEntityId('rule-1'),
+      owner: { ownerType: 'GLOBAL' },
+      slotKind: 'LEFTOVER_POLICY',
+    },
   );
 
   acceptsRule({
@@ -128,6 +161,7 @@ if (COMPILE_TIME_ONLY) {
     ruleId: 'rule-1',
     owner: { ownerType: 'GLOBAL' },
     slotKind: 'LEFTOVER_POLICY',
+    status: 'ACTIVE',
   });
 
   acceptsRule({
@@ -162,8 +196,8 @@ if (COMPILE_TIME_ONLY) {
 
   acceptsRule({
     ...BUCKET_FUNDING_RULE,
-    // @ts-expect-error - Decision 082: Rule.status and lifecycle are deliberately not introduced.
-    status: 'ACTIVE',
+    // @ts-expect-error - Decision 083: the vocabulary is exactly ACTIVE and RETIRED.
+    status: 'DISABLED',
   });
 
   acceptsRule({
@@ -180,6 +214,24 @@ if (COMPILE_TIME_ONLY) {
 
   acceptsRule({
     ...BUCKET_FUNDING_RULE,
+    // @ts-expect-error - Decision 083: a stop is dated on the version timeline, never on the rule.
+    retiredAt: '2026-06-01',
+  });
+
+  acceptsRule({
+    ...BUCKET_FUNDING_RULE,
+    // @ts-expect-error - Decision 083: no dated lifecycle field belongs on the rule.
+    stoppedAt: '2026-06-01',
+  });
+
+  acceptsRule({
+    ...BUCKET_FUNDING_RULE,
+    // @ts-expect-error - Decision 083: no lifecycle event or reason is introduced.
+    statusReason: 'user retired it',
+  });
+
+  acceptsRule({
+    ...BUCKET_FUNDING_RULE,
     // @ts-expect-error - Decision 081: no RuleVersion configuration payload is designed here.
     configuration: {},
   });
@@ -191,4 +243,12 @@ if (COMPILE_TIME_ONLY) {
 
   // @ts-expect-error - Decision 081: changing a slot kind is a different logical rule.
   rule.slotKind = 'GOAL_POLICY';
+
+  /*
+   * Decision 083 records lifecycle semantics rather than persistence mechanics.
+   * The field stays readonly here, so a transition is not expressed by writing
+   * through this contract.
+   */
+  // @ts-expect-error - Decision 083: the status is readonly on the contract.
+  rule.status = 'RETIRED';
 }
