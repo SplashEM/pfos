@@ -10,6 +10,7 @@ import {
   isEffectiveOn,
   type RuleEffectivePeriod,
 } from '@domain/rules/contracts/rule-effective-period';
+import { precedenceLevelOf, type RuleOwner } from '@domain/rules/contracts/rule-owner';
 import { RULE_WARNING_CODES } from '@domain/rules/contracts/rule-warning-codes';
 import { RULE_ERROR_CODES } from '@domain/rules/errors/rule-error-codes';
 import { selectRuleVersionEffectiveOn } from '@domain/rules/services/rule-version-selection';
@@ -37,9 +38,10 @@ import {
  *
  * PFOS-ENG-01 §26 requires that resolution never depend on object iteration
  * order or on random identifiers, and §43.4 asks that repeated and reordered
- * input produce identical output. The eight functions exercised below are the
+ * input produce identical output. The nine functions exercised below are the
  * only Rule Engine behavior accepted so far (Decisions 071, 075, 076, 077,
- * 078, 079), so they are the only place those requirements can be tested today.
+ * 078, 079, 081), so they are the only place those requirements can be tested
+ * today.
  *
  * Example-based coverage already sits beside each function and is not repeated
  * here. This file adds only what an example cannot state: that the
@@ -1147,5 +1149,83 @@ describe('the Decision 079 generators are not vacuous', () => {
         return selectRuleVersionEffectiveOn(versions, evaluationDate).ok;
       }),
     ).toBe(true);
+  });
+});
+
+/**
+ * The §6 level of each owner type, restated from Decision 081 as it is in
+ * src/domain/rules/contracts/rule-owner.test.ts. The production table is
+ * unexported, so pinning the numbers independently is what makes this a check.
+ */
+const PRECEDENCE_BY_OWNER_TYPE: Record<RuleOwner['ownerType'], number> = {
+  INCOME_SOURCE: 5,
+  BUCKET: 6,
+  GROUP: 7,
+  GLOBAL: 8,
+};
+
+/** The three owners that carry an identifier; GLOBAL is attached to nothing. */
+type AttachedOwnerType = Exclude<RuleOwner['ownerType'], 'GLOBAL'>;
+
+const attachedOwnerTypeArbitrary: fc.Arbitrary<AttachedOwnerType> = fc.constantFrom(
+  'INCOME_SOURCE',
+  'BUCKET',
+  'GROUP',
+);
+
+/**
+ * Identifiers are drawn as arbitrary strings rather than from a small pool.
+ * PFOS-ENG-00 §14 fixes no format and forbids deriving meaning from one, so
+ * empty, numeric-looking and ordered-looking identifiers are all admissible
+ * input here.
+ */
+const ownerArbitrary: fc.Arbitrary<RuleOwner> = fc.oneof(
+  fc.constant<RuleOwner>({ ownerType: 'GLOBAL' }),
+  fc
+    .tuple(attachedOwnerTypeArbitrary, fc.string())
+    .map(([ownerType, ownerId]): RuleOwner => ({ ownerType, ownerId: asEntityId(ownerId) })),
+);
+
+describe('precedenceLevelOf properties', () => {
+  /*
+   * Decision 081: the §6 level is a total function of the owner. Every owner
+   * therefore projects, and it projects to the level fixed for its type.
+   */
+  it('projects every owner to the level fixed for its owner type', () => {
+    fc.assert(
+      fc.property(ownerArbitrary, (owner) => {
+        expect(precedenceLevelOf(owner)).toBe(PRECEDENCE_BY_OWNER_TYPE[owner.ownerType]);
+      }),
+    );
+  });
+
+  /*
+   * PFOS-ENG-00 §14 keeps an identifier opaque and §27 allows a stable ID only
+   * as a final technical tie-breaker, never as a visible financial rule. Two
+   * owners of one type must therefore project identically however their
+   * identifiers differ.
+   */
+  it('reads the owner type and never the owner identifier', () => {
+    fc.assert(
+      fc.property(
+        attachedOwnerTypeArbitrary,
+        fc.string(),
+        fc.string(),
+        (ownerType, left, right) => {
+          expect(precedenceLevelOf({ ownerType, ownerId: asEntityId(left) })).toBe(
+            precedenceLevelOf({ ownerType, ownerId: asEntityId(right) }),
+          );
+        },
+      ),
+    );
+  });
+
+  /* §26: repeated evaluation of the same input produces the same output. */
+  it('returns the same level however often it is asked', () => {
+    fc.assert(
+      fc.property(ownerArbitrary, (owner) => {
+        expect(precedenceLevelOf(owner)).toBe(precedenceLevelOf(owner));
+      }),
+    );
   });
 });
