@@ -5374,6 +5374,199 @@ Reconsider when `Rule.status` is defined, since the uniqueness invariant then be
 
 ---
 
+# Decision 083: Rule Lifecycle, Status and the Stopping Constraint
+
+**Status:** Accepted
+**Related:** Decisions 022, 023, 068, 073, 074, 078, 079, 080, 081, 082
+**Scope:** Financial logic, Architecture, Engineering, Data
+
+## Decision
+
+A `Rule` carries a lifecycle status with exactly two members:
+
+```ts
+export type RuleStatus = 'ACTIVE' | 'RETIRED';
+```
+
+The stable authored `Rule` of Decision 081 will carry `readonly status: RuleStatus` alongside `ruleId`, `owner` and `slotKind`, which are themselves unchanged.
+
+`RETIRED` is terminal. The lifecycle of a logical rule admits one transition, from `ACTIVE` to `RETIRED`, and no return.
+
+Status carries no date, and it is never read as financial truth.
+
+Stopping a rule must be represented by a prospective, dated, append-only event in that rule's version timeline. The exact terminating representation is deferred to the `RuleVersion` payload decision and is not chosen here.
+
+This decision settles lifecycle semantics. It does not settle persistence mechanics: whether the transition is represented by replacing a stored record, by an audit-carried event, or otherwise belongs to the repository and database specifications, and nothing here requires mutating a value in place.
+
+## Three questions that must stay apart
+
+`Rule.status` answers whether a logical rule is part of the user's current authored plan or is retained only as historical and audit state.
+
+`RuleEffectivePeriod` together with Decision 079 answers which immutable `RuleVersion` is effective for a given date.
+
+A terminating representation, once defined, answers whether the selected version contributes financial configuration or represents a stop.
+
+These are three distinct questions and no two of them may be merged. Status carries no date; the effective period carries no lifecycle; a terminating semantic carries no plan membership. Every question containing a date is answered by the version timeline, and every question about membership of the current plan is answered by status.
+
+The bridging invariant is that changing a rule's status must not change the resolved value for any date.
+
+## Current status is not historical financial truth
+
+Current `Rule.status` may govern current-plan membership and authoring operations, and it may govern the structural authored-scope uniqueness domain recorded below.
+
+Current `Rule.status` must not, by itself, exclude a rule from resolution for an earlier evaluation date. A rule that is `RETIRED` today may be the rule that applied historically, and excluding it because of a later administrative state would rewrite the past — which Constitution Principle 11 forbids and PFOS-ENG-00 §32 Invariant 10 states as a global invariant. Decision 074 makes `HISTORICAL_RECALCULATION` a resolution mode, so a path that re-resolves for a past date exists and must remain correct.
+
+It follows that no claim is made here that filtering `RETIRED` rules out of resolver population is result-preserving. It is not.
+
+Nor is any claim made that date-based pre-filtering is necessarily result-preserving. Decision 079 fixes the shape of a rule-level `SkippedRule` for a rule with no effective version, and a rule removed from population before resolution cannot produce such a record, so a filter may leave the money identical while changing the explanation surface.
+
+Which rules an evaluation context supplies, and whether it supplies all retained rules or a date-aware selection produced elsewhere, is evaluation-context population. Decision 081 and Decision 082 defer it and this decision defers it too. What is fixed here is only the constraint any such population must satisfy: it must include every retained rule that could have contributed on the evaluation date, and current status is not an admissible filter.
+
+### A worked case
+
+A bucket-owned `ROLLOVER_POLICY` rule A applied from January and was retired in June. A replacement rule B was created in June at the same authored scope.
+
+A historical recalculation for March must reconstruct rule A. Rule A is in scope for that date because it was retained, not because of its present status; its January version is effective on that date and answers. Rule B contributes nothing, because its first version does not begin until June.
+
+Resolution in August must resolve rule B and must not financially reactivate rule A. Rule A is again in scope, and again its status is not consulted; its own dated stop is what ends its contribution, and rule B's version is effective.
+
+Both outcomes are produced by dated, immutable timelines. Neither reads current status. That is the whole of the model, and it is why the retirement precondition below is a requirement rather than a recommendation: without a dated stop, a retired rule and an active rule at one authored scope would be separable only by the status the resolver may not read.
+
+## Stopping an open-ended rule
+
+Decision 079 recorded that PFOS-ENG-01 §28 offers an author only "effective immediately" or "effective on a future date", and that no accepted gesture closes a previous version. Stopping an open-ended rule was left open there. It is constrained here.
+
+A stop must be prospective under Decision 022, dated, append-only in the version timeline, and non-mutating with respect to every existing `RuleVersion`. Decision 078 fixes a version's effective period at creation, and §19.1 requires a version used in a confirmed allocation to remain reconstructable, so no existing version's period is amended to express a stop.
+
+Decision 078 and Decision 079 do not already define such an event, and this decision does not claim that they do. Decision 079 establishes that a rule with **zero effective versions** contributes nothing for a date. It does not establish an **effective version that means "contributes nothing"**. That is a new `RuleVersion` semantic, and no accepted source supplies it.
+
+The exact terminating representation is therefore deferred to the `RuleVersion` payload decision. Candidate representations exist and none is chosen here: a version whose configuration expresses no contribution, which is the direction §12.2 points by listing enablement among configurable fields beside an effective date; or a version-level terminal marker outside configuration, which Decision 078 declined to introduce but did not forbid. Selection and materialization semantics for whichever is chosen belong to that decision as well.
+
+## Retirement
+
+A rule may not become `RETIRED` unless its dated stop is represented in its version timeline. `RETIRED` asserts that such a stop exists; it never substitutes for one.
+
+This is a semantic precondition, and two things require it. A retirement without a represented stop leaves a financial-history gap whose date was never recorded, which PFOS-ENG-01 §40 and Constitution Principle 12 both work against. More decisively, because date-based resolution does not read status, a retired rule whose timeline was never stopped remains indistinguishable from an active rule at the same authored scope on a current date.
+
+No transaction or database mechanics are designed here, and no ordering between the two facts is prescribed. What is fixed is that a `RETIRED` rule whose stop is unrepresented is not a valid state.
+
+Validating that precondition requires knowing the terminating representation, so enforcement is deferred with it. Import and restore are the sharp case, since §37 requires the Rule Engine to validate imported rules and PFOS-ENG-00 §29.1 treats imported content as untrusted.
+
+## Temporary stopping and resuming
+
+Temporary stopping is a dated timeline concept and not a status. The intended semantic is a dated stop followed, where the user resumes, by an ordinary configuration `RuleVersion` from the resume date, so the interruption is visible in the history rather than concealed behind an undated flag.
+
+A resume requires no new semantic: it is an ordinary new version under §18 and §19.2. The stop half is not implementable until the terminating representation is defined, and nothing here should be read as saying otherwise.
+
+An undated status meaning "temporarily off" is rejected. It cannot express a stop dated in the future, which §28 and Decision 022 both require, and it would leave an open-ended version appearing to have applied throughout a period the rule was off.
+
+## Authored-scope uniqueness
+
+Decision 082 characterized the condition — for the seven replacing slot kinds, two rules sharing `(ownerType, ownerId, slotKind)` claim one authored scope and are semantically invalid — but could not state the set of rules it ranges over, because lifecycle was undefined. That set is now defined.
+
+The domain is the `ACTIVE` rules of the current authored plan. The key is `(ownerType, ownerId, slotKind)`, where a `GLOBAL` owner has no `ownerId` and keys on owner type and slot kind alone. `GLOBAL_OBLIGATION` remains exempt, since Decision 080 accepts that separately authored obligations accumulate.
+
+`RETIRED` rules are excluded from this domain. A retired rule therefore never permanently blocks a replacement, and a retired rule may legitimately coexist with an `ACTIVE` rule at the same authored-scope key. That is the ordinary shape after a replacement, and it creates no current-plan ambiguity because exactly one rule at that scope is `ACTIVE`, while historical reconstruction is unaffected because the retired rule and all its versions are retained.
+
+The invariant is structural. It consults no evaluation date, no `RuleVersion` effectiveness and no evaluation context, and it must not be confused with the retained-rule population that date-based resolution receives.
+
+## Two pipelines
+
+Authoring and plan validation read current status: the `ACTIVE` rules of the current authored plan are the domain over which authored-scope uniqueness is enforced.
+
+Date-based resolution does not read status: retained relevant rules supply their `RuleVersions`, Decision 079 selects the version with the latest effective start, a terminating representation once defined determines whether the selected version contributes, and Decision 080 then resolves precedence across rules.
+
+Decision 079 is unchanged, and lifecycle eligibility is deliberately not placed in front of it. Doing so would exclude historically relevant retired rules, which the section above forbids. Retained-rule population is not fully defined here.
+
+## Deletion and retention
+
+Normal physical deletion of a `Rule` is not supported in V1. Historical rules and their versions remain retained and auditable.
+
+PFOS-ENG-00 §32 Invariant 12 requires every reference in a confirmed record to resolve to a valid entity or a preserved historical reference, Invariant 9 keeps historical operations tied to their Plan Snapshot, §19.1 requires reconstructability, and Decision 074's `sourceRuleVersionIds` names versions from inside a snapshot. PFOS-ENG-00 §15 lists soft deletion among the sanctioned change mechanisms and the PRD states that historical data should generally be soft-deleted rather than silently destroyed. A user-facing request to delete a rule is therefore retirement.
+
+Full user-data deletion remains governed separately by the existing product policy and is untouched here.
+
+No persisted rule draft is introduced. §21's activation gate is validation performed before activation, not a persisted state, and no accepted source establishes a stored pre-active rule.
+
+## Consequence for the Rule contract
+
+Decision 081 recorded `Rule.status`, lifecycle and how an open-ended rule is stopped in its deliberately deferred list. This decision discharges the first two and constrains the third. Decision 081 is extended rather than contradicted, and no amendment to it is required.
+
+`RuleStatus` and the `status` field are recorded conceptually here and are not implemented by this decision. When implementation is authorised, the field is documented as excluded from resolution, because its hazard is precisely that a later reader will assume it filters candidates.
+
+## No new code
+
+No skip-reason code and no explanation code is introduced, and no error code is registered or named. Decision 073's convention is that a code is named once the behavior it reports is specified.
+
+Whether a stopped or retired rule produces a `SkippedRule` at all depends on the resolver and on evaluation-context population, which Decision 079 expressly left open, and it depends further on the terminating representation. No existing skip code is reinterpreted here.
+
+This decision fully characterizes the domain a future authored-scope uniqueness validator requires — `ACTIVE` rules, the current authored plan, Decision 082's key, and the `GLOBAL_OBLIGATION` exemption — so that validator becomes specifiable. Authorising it, and naming the code it reports, belongs to a separate decision.
+
+## Deliberately deferred
+
+- The terminating `RuleVersion` representation, and its selection and materialization semantics.
+- The full `RuleVersion` configuration payload.
+- Enforcement of the requirement that a `RETIRED` rule carry a represented dated stop, including on import and restore.
+- Evaluation-context population, including which retained rules a resolution receives.
+- Skip emission, and any explanation accompanying a stopped or retired rule.
+- The authored-scope uniqueness validator and its error code.
+- `ResolvedGlobalObligation.sequence` and `ResolvedFundingRule.sequence`.
+- Blocker F.
+- Missing product-default values and product-default provenance.
+- Plan Snapshot design, simulation overrides, event overrides, cycles, runtime freezing, warning-array ordering, explanation multiplicity, and all Milestone 3 behavior.
+
+## Why
+
+Decision 079 recorded that no accepted gesture closes a previous version, and Decision 082 recorded that its uniqueness condition could not be enforced because the set of rules it ranges over was unknown. Both point at the same missing piece, and both name it as lifecycle.
+
+The smallest thing that answers them is a two-member status that says only whether a rule belongs to the current plan. Everything dated stays where Decision 078 put it, on the version, so no second dated dimension is created and there are no two facts that can disagree — the objection Decision 081 raised against storing a precedence level applies unchanged to storing a dated lifecycle fact on the rule.
+
+Separating current membership from historical truth is what makes the model safe. Once the resolver is forbidden to read status, a retirement can never alter a past answer, and the guarantee is structural rather than a matter of implementation discipline.
+
+What that leaves unsolved is honest and bounded: the corpus supports the constraint that a stop is dated and append-only, but it does not supply the representation of a version that contributes nothing. Choosing one here would be designing the payload inside a lifecycle decision.
+
+## Alternatives Considered
+
+An undated `ACTIVE`/`INACTIVE` toggle was rejected. It cannot express a stop dated in the future, which §28 and Decision 022 require, and if the resolver read it a historical recalculation would return a different answer than the allocation it recalculates.
+
+`ACTIVE`, `DISABLED` and `ARCHIVED` was rejected. `DISABLED` inherits the defect above, and `ARCHIVED` collides with bucket, group and goal archival, which already carry allocation meaning in §21.1, Invariant 7, `RULE_SKIP_DESTINATION_ARCHIVED` and the PRD's goal lifecycle. `RETIRED` appears nowhere in the corpus and carries no inherited meaning.
+
+A `DRAFT` member was rejected as unsupported: §21 describes validation before activation, not a persisted pre-active rule. Should one later prove necessary it falls outside `ACTIVE` and therefore outside the uniqueness domain recorded above, so the domain statement does not have to change to accommodate it.
+
+Introducing no status at all was considered seriously, with lifecycle carried entirely by the version timeline and soft deletion treated as repository state. It is smaller. It was rejected because §18 names status among the fields every permanent rule must have and no accepted decision has removed it, because soft deletion needs a marker distinguishing a rule removed from the plan from a rule currently contributing nothing, and because it would foreclose replacement by a new logical rule.
+
+A dated stop field on `Rule` was rejected. It would have made lifecycle implementable immediately, without waiting for the payload decision, and being dated it would not have falsified history. It was rejected because it puts a second dated dimension beside the version timeline, with no defined meaning when a version is authored effective after the stop date, and because Decision 078 deliberately moved dates off the stable rule.
+
+Mutating the previous version to add an `effectiveTo` was rejected. Decision 078 states that a version's effective period does not change after creation, and a version named from inside a Plan Snapshot would later resolve to a period other than the one that applied. Adopting it would require amending Decision 078.
+
+Permitting resolver population to exclude `RETIRED` rules as an optimisation was considered and rejected as unsound, for the reasons recorded above.
+
+## Tradeoffs
+
+Lifecycle is settled while the stopping gesture is not implementable, so the user-visible ability to stop a rule arrives with the payload decision rather than with this one.
+
+This decision constrains that payload decision to an append-only dated representation. That is intended, and it restates a consequence Decision 078 already imposes rather than adding a new prohibition.
+
+The stable authored rule of Decision 081 gains a field that changes once over a rule's life, so `Rule` is no longer wholly unchanging even though its addressing fields are.
+
+The requirement that a retired rule carry a represented dated stop is stated before it can be enforced, so the invariant is known ahead of its validator, as Decision 082's uniqueness condition was.
+
+## Consequences
+
+Decision 082's deferred enforcement question is answered: the authored-scope uniqueness invariant ranges over the `ACTIVE` rules of the current authored plan, and a bounded structural validator becomes specifiable without dates, versions or evaluation context.
+
+`RuleStatus` and a `status` field on `Rule` may be implemented once authorised, together with the tests that accompany the existing contract.
+
+No registry changes, no `ResolvedRuleSet` field changes, and no change to Decision 078 or Decision 079.
+
+Blocker F remains open, and evaluation-context population remains the gate on skip emission.
+
+## Future Review Trigger
+
+Reconsider when the `RuleVersion` payload decision defines the terminating representation, since retirement's precondition then becomes enforceable and temporary stopping becomes implementable; when evaluation-context population is settled, since the constraint recorded here becomes checkable against a concrete population; if an authoring layer ever requires a persisted pre-active rule, since a third status member would then be argued for; or if a future source authorises a rule to be returned from `RETIRED` to `ACTIVE`, which this decision forbids.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
