@@ -5567,6 +5567,210 @@ Reconsider when the `RuleVersion` payload decision defines the terminating repre
 
 ---
 
+# Decision 084: Authored-Scope Uniqueness Validation
+
+**Status:** Accepted
+**Related:** Decisions 068, 071, 073, 076, 078, 079, 080, 081, 082, 083
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+The authored-scope uniqueness validator characterized by Decision 082 and given its domain by Decision 083 is authorised, together with one Rule Engine error code:
+
+```text
+RULE_DUPLICATE_AUTHORED_SCOPE, category VALIDATION
+```
+
+A plan is invalid when two `ACTIVE` rules of the current authored plan claim the same authored scope on a replacing slot kind.
+
+## What this decision does, and what it does not
+
+It performs the separate authorisation Decision 083 reserved: it authorises the validator and names the code it reports.
+
+It does not amend Decision 082 or Decision 083, and it introduces no new semantics. The domain, the key and the exemption are taken from them unchanged.
+
+Decision 068 places the accepted Decision Log above a task instruction, and Decision 083 reserved this authorisation to a separate decision. That is why the authorisation is recorded here rather than assumed by an implementation.
+
+## Domain
+
+The validator ranges over the `ACTIVE` rules of the current authored plan. `RETIRED` rules are excluded, as Decision 083 established, so a retired rule never permanently blocks a replacement and may legitimately share an authored scope with the active rule that replaced it.
+
+The validator may inspect `Rule.status` itself. A caller may therefore supply the current plan's retained rule collection rather than being required to pre-filter it, and the domain cannot be widened by a caller that forgets to. This is the one place Decision 083 permits status to be read: current authored-plan structure, never date-based resolution.
+
+Grouping rules by plan remains the caller's responsibility. The function reads no plan identifier and cannot confirm that a supplied collection is one plan's rules. No Plan repository or Plan domain contract is designed here, and Decision 079's version-history validator already carries the same limitation for one rule's versions.
+
+## The authored scope
+
+An authored scope is a `RuleOwner` value together with a `ResolvedSlotKind`.
+
+Two `RuleOwner` values are equal when:
+
+- both are `GLOBAL` — no `ownerId` exists on either;
+- or both carry the same `ownerType` among `INCOME_SOURCE`, `BUCKET` and `GROUP`, and their `ownerId` values are equal.
+
+Owner types are never compared across each other, so a bucket and a group carrying the same identifier value are two different scopes.
+
+`GLOBAL` is not described as having an optional `ownerId`. It has no such field. PFOS-ENG-01 §47.8 requires a discriminated union rather than an always-present-except-once identifier, and Decision 081 adopted exactly that shape.
+
+This is a clarification of the tuple shorthand used by Decisions 082 and 083, not an amendment. Decision 083 already states that a `GLOBAL` owner has no `ownerId` and keys on owner type and slot kind alone, and Decision 082 already states that `owner` together with `slotKind` completely identifies an authored rule's V1 scope. The key is unchanged.
+
+## Slot kinds
+
+`GLOBAL_OBLIGATION` is exempt. Decision 080 accepts that separately authored obligations accumulate, so more than one rule at one owner is valid there. The exemption is a property of the kind rather than of the owner, so it holds at every owner.
+
+The seven replacing kinds are in scope:
+
+- `ALLOCATION_BASIS`
+- `TOP_PRIORITIES`
+- `REQUIRED_FUNDING`
+- `LOWER_PRIORITY_POOL`
+- `LEFTOVER_POLICY`
+- `ROLLOVER_POLICY`
+- `GOAL_POLICY`
+
+Seven replacing kinds plus one exempt kind exhausts `ResolvedSlotKind`, so no member is unclassified. No other exemption is introduced and no per-slot exception is invented.
+
+## Structural only
+
+The validator reads no `RuleVersion`, no `effectiveFrom` or `effectiveTo`, no evaluation date, no resolution mode, no evaluation context and no precedence, and it accepts none of them as input.
+
+Decision 082 records why: two rules claiming one authored scope are meaningless whether or not their versions overlap, so version effectiveness can neither rescue nor excuse the collision. This must not be confused with the retained-rule population that date-based resolution receives.
+
+`ruleId` is not part of the uniqueness key. Two rules carrying different identities collide whenever their authored scopes match, and different identifiers do not make duplicate authored scopes valid. Decision 081 already records that `owner` and `slotKind` are not the rule's natural key, precisely because `ruleId` is the surrogate identity that persists across every version.
+
+## Valid
+
+- An `ACTIVE` rule and a `RETIRED` rule at one authored scope. This is the ordinary shape after a replacement.
+- Two `RETIRED` rules at one authored scope. Neither is part of the current plan.
+- Several `ACTIVE` `GLOBAL_OBLIGATION` rules at one owner.
+- One replacing kind at different `ownerId` values of one owner type.
+- One replacing kind at different owner types. §43.2's worked precedence chain is exactly this shape and must remain expressible.
+- One owner holding several different replacing kinds.
+- An empty collection.
+
+## Invalid
+
+Two `ACTIVE` rules sharing one replacing authored scope, at:
+
+- `GLOBAL`;
+- `BUCKET` with the same bucket `ownerId`;
+- `GROUP` with the same group `ownerId`;
+- `INCOME_SOURCE` with the same income-source `ownerId`.
+
+## What this validator does not check
+
+It does not validate whether a particular owner type may author a particular slot kind.
+
+Decision 082 confines `REQUIRED_FUNDING` to bucket owners in V1, and records that §5.4's group lower-priority bullet has no established V1 meaning. Neither is enforced here, and neither is authorised as a validator by this decision.
+
+Authorising uniqueness must therefore not be read as establishing that every combination of `RuleOwner` and `ResolvedSlotKind` is valid authoring. Owner-and-kind legality is a separate concern and remains open.
+
+## Failure, multiplicity and determinism
+
+A collision is a hard validation error under §21.1 and blocks activation.
+
+The validator reports a single `RuleDomainError` and introduces no aggregation. Every existing Rule Engine validator returns one error, and no accepted PFOS contract defines how multiple simultaneous validation failures are aggregated or ordered. This decision follows that existing single-error convention and introduces no multi-error aggregation contract; it takes no position on whether such a contract could later be defined.
+
+No first or primary offending rule is named, and no `ruleId` tie-breaker is introduced. `ruleId` is not part of this invariant, so no identifier ordering is needed here and none is authorised.
+
+The valid-or-invalid outcome must not depend on the order of the supplied collection, on rule identifiers, or on object iteration order. Because the reported error carries no identity-specific payload, every rejection uses the same fixed error value, so the returned result is unchanged by the arrangement of the input even though the order in which a collision is encountered may differ.
+
+## Error contract
+
+Exactly one code is authorised:
+
+```text
+RULE_DUPLICATE_AUTHORED_SCOPE
+```
+
+Its category is `VALIDATION`, matching `RULE_TOP_PRIORITY_DUPLICATE_RANK` and `RULE_VERSION_DUPLICATE_EFFECTIVE_FROM`, the two existing duplicate-detection codes. Decision 079 considered `CONFLICT` for the nearer of those and preferred consistency, recording that §39's `RuleConflictError` names an error concept rather than one of PFOS-ENG-00 §22's closed categories; the same reasoning applies here.
+
+No second code is introduced for any owner type or any slot kind.
+
+`affectedEntityIds` is omitted, and the error interpolates no identifier or other context. Both rules sharing an authored scope are equally part of the collision, no accepted source says which is at fault, and populating the field would establish the first ordering convention for the error channel without a decision behind it. Every existing Rule Engine validator omits it on the same grounds.
+
+The smallest existing `RuleDomainError` shape is therefore sufficient, and every duplicate-authored-scope rejection may use the same fixed error value.
+
+## Identifier handling
+
+An identifier is opaque (PFOS-ENG-00 §14). This validator compares owner identifiers for equality only. It does not parse an identifier, derive meaning from its shape, or infer ordering from it.
+
+It must not build a delimiter-concatenated composite key whose correctness depends on identifier contents. §14 fixes no identifier format and PFOS-ENG-00 §29.1 treats imported content as untrusted, so an identifier containing the chosen delimiter could fabricate or conceal a collision. This constraint is normative.
+
+The representation used to detect a repeated scope is not fixed here. Any representation that preserves the semantics above is permitted.
+
+## Validator API
+
+The bounded API authorised is:
+
+```ts
+validateDistinctAuthoredScopes(rules: readonly Rule[]): Result<void, RuleDomainError>;
+```
+
+It follows the existing convention: one subject or one readonly collection in, `Result<void, RuleDomainError>` out.
+
+No structural `Like` contract is introduced. Decision 079's version validator needed one because `RuleVersion` did not exist; `Rule` exists and is complete, so this validator takes it directly.
+
+No repository, Plan contract, persistence, resolver or evaluation-context API is designed.
+
+## Deliberately deferred
+
+- The terminating `RuleVersion` representation, and enforcement of Decision 083's requirement that a `RETIRED` rule carry a represented dated stop.
+- Any owner-and-kind authoring-legality validator.
+- Historical resolution and resolver candidate population.
+- Skip and explanation emission.
+- The full `RuleVersion` configuration payload.
+- Blocker F.
+- `ResolvedGlobalObligation.sequence` and `ResolvedFundingRule.sequence`.
+- Missing product-default values and product-default provenance.
+- Plan Snapshot design, and all Milestone 3 behavior.
+
+## Why
+
+Decision 082 characterized the condition but could not state the set of rules it ranges over. Decision 083 supplied that set and then reserved the authorisation itself, on Decision 073's convention that a code is named once the behavior it reports is specified. The behavior is now specified in full, so the remaining step is authorisation rather than design.
+
+Nothing here is a new product or financial judgement. The domain, key, exemption and failure class are quoted from accepted decisions, and the API, multiplicity and payload follow conventions with several shipped precedents.
+
+The one clause that is not a quotation is the identifier-handling constraint, and it is a consequence of §14 and §29.1 rather than a choice: a validator whose correctness depends on the byte content of an opaque identifier would be unsound against untrusted import data.
+
+## Alternatives Considered
+
+`CONFLICT` and `INVARIANT_VIOLATION` were considered as categories. `VALIDATION` was preferred for consistency with the two existing duplicate codes, one of which reports a determinism-invariant defect and still uses `VALIDATION`.
+
+`RULE_AUTHORED_SCOPE_DUPLICATE` and `RULE_AUTHORED_SCOPE_NOT_UNIQUE` were considered as names. Neither is materially better: the registry's duplicate codes qualify the prefix when the subject is a sub-entity, and here the subject is the rule itself, so no qualifier is needed.
+
+Reporting every collision rather than one was considered and not adopted, because no accepted contract defines aggregation or ordering of simultaneous validation failures and this decision introduces none.
+
+Populating `affectedEntityIds` with the colliding rules was considered and rejected for the reason the shipped validators already record.
+
+Requiring the caller to pass a pre-filtered `ACTIVE` collection was considered and rejected: it moves a decided domain into an unwritten caller.
+
+Fixing a particular data structure — nested maps and sets keyed by slot kind, owner type and owner identifier — was considered as normative and rejected. It is a safe example and is recorded here as implementation guidance only, explicitly non-normative.
+
+## Tradeoffs
+
+The invariant becomes enforceable while the caller that assembles a plan's rules does not yet exist, so the validator is implementable before anything calls it.
+
+A single error means a plan holding several collisions reports one of them, and the author fixes them one at a time.
+
+An error naming no entity is precise about the defect and silent about where it is, which a future user interface may want to improve; doing so requires an accepted decision about the error channel.
+
+## Consequences
+
+`validateDistinctAuthoredScopes` may be implemented in Milestone 2, alongside the existing validators and following their conventions.
+
+`RULE_DUPLICATE_AUTHORED_SCOPE` joins `RULE_ERROR_CODES`. The four-registry architecture tests cover it without change, since it carries the `RULE_` prefix, none of the reserved `RULE_EXPLAIN_`, `RULE_SKIP_` or `RULE_WARN_` prefixes, and a key identical to its value.
+
+§21.1's enumerated hard-error list gains one condition, derived from the "rule violates a system invariant" bullet already present there.
+
+No contract changes, no registry value changes, no `ResolvedRuleSet` field changes, and no change to Decision 079 or Decision 083.
+
+## Future Review Trigger
+
+Reconsider if an accepted decision ever defines aggregation or ordering of simultaneous validation failures, since reporting every collision would then become expressible; if owner-and-kind authoring legality is settled, since a second validator would join this one; if `ResolvedSlotKind` gains a member, since it must be classified as replacing or additive; if a future slot kind becomes additive, since the exemption list would grow; or if `Rule.status` gains a member, since the domain statement would need to say where it falls.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
