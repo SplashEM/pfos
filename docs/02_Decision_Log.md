@@ -5979,6 +5979,256 @@ Reconsider when the `RuleVersion` payload decision supplies the configured arm, 
 
 ---
 
+# Decision 086: The Configured Rule Version Envelope and Configuration Family Discrimination
+
+**Status:** Accepted
+**Related:** Decisions 022, 068, 071, 073, 074, 075, 076, 078, 079, 080, 081, 082, 083, 084, 085
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+A configured rule version carries, at minimum:
+
+- a discriminant fixing it as `CONFIGURED`;
+- `ruleVersionId`, its own identity;
+- `ruleId`, the stable rule whose timeline it belongs to;
+- `period`, being Decision 078's `RuleEffectivePeriod` in full;
+- `configuration`, a required and non-nullable configuration value.
+
+`RuleConfiguration`, when it is eventually defined, is an explicitly discriminated union whose family tag is carried inside the configuration value and draws its members from the existing `ResolvedSlotKind` vocabulary.
+
+This is a conceptual envelope, in the register of PFOS-ENG-01 §41, which closes by recording that exact field types belong to other specifications. It is not an implementable contract, and no source implementation is authorised.
+
+## What this decision is, and what it is not
+
+Decision 085 assigned the configured arm, the union name and any closed `kind` vocabulary to "the `RuleVersion` payload decision". This decision splits that work and discharges only the envelope and discrimination half of it.
+
+It settles the configured discriminant, the minimum conceptual envelope, configured effective-period semantics, the configuration-family discrimination architecture, the absence of a named kind vocabulary, and a blocker inventory.
+
+It defines no configuration payload arm, resolves no `RuleVersion` metadata question, and authorises no code.
+
+The remainder — the configuration payload, its arms, and the metadata questions recorded below — belongs to the decision or decisions that complete the `RuleVersion` contract.
+
+## The five elements are a minimum, not a closed field list
+
+The five elements above are the least a configured rule version can carry.
+
+This decision does not close the field list. Nothing here may be read as establishing that a configured rule version carries those five elements and nothing else, and whether further fields join them is unresolved and recorded below.
+
+## The CONFIGURED discriminant
+
+Decision 085 fixed the terminating arm and recorded that "only the terminating arm and its discriminant literal are fixed here".
+
+The configured literal is fixed here, as `CONFIGURED`. That is the spelling Decision 085 already used when recording that a selected `CONFIGURED` version contributes its configuration, so this performs an act Decision 085 identified rather than introducing a new term.
+
+## Configuration is required and non-nullable
+
+`configuration` is never absent and never nullable.
+
+Decision 085 rejected an absent or nullable configuration as a way of expressing a stop, because PFOS-ENG-00 §29.1 treats imported content as untrusted and a truncated record would become a deliberate financial instruction. The same reasoning fixes the element as required here: a configured version whose configuration is missing must be unrepresentable rather than merely invalid, so that silence is never read as an instruction under Constitution Principle 4.
+
+No placeholder stands in for the undefined payload. `unknown`, `Record<string, unknown>`, arbitrary JSON and any invented placeholder type are excluded. Each would let a contract compile at the cost of admitting configurations no accepted source describes, and PFOS-ENG-01 §47.9 requires unknown rule variants to be rejected rather than accommodated.
+
+## Configured versions use the full effective period
+
+A configured rule version's period is Decision 078's `RuleEffectivePeriod`, including its optional `effectiveTo`. A configured version may be bounded or open-ended, and both are valid.
+
+The element is named `period`, not `effectivePeriod`, matching the shipped `RuleVersionEffectivePeriodLike` and the field-name clause of Decision 085.
+
+Decision 078 is unchanged.
+
+Decision 085's narrowing of the period to `effectiveFrom` alone remains specific to `TerminatingRuleVersion` and is not generalised. That narrowing answers a hazard particular to stops: a bounded stop would drop out of `isEffectiveOn` when its bound elapsed, leaving an older open-ended configured version the only effective candidate, so terms the user stopped would resume with no authored act at any point. A configured version carries no equivalent hazard, because an elapsed configured version leaves either an older configured version or a stop, and both are authored.
+
+`validateRuleEffectivePeriod` and `RULE_EFFECTIVE_PERIOD_INVALID_RANGE` acquire their first possible producer once a configured arm exists. Neither is invoked, extended or changed here.
+
+## The conceptual variants
+
+A rule version is conceptually `CONFIGURED` or `TERMINATING`. No third variant is established by this decision or by any accepted source.
+
+No `RuleVersionKind` is introduced. A named closed vocabulary is unnecessary before the union exists, and Decision 081 refused an equivalent second name for the precedence levels on the ground that a duplicate vocabulary is an invitation to store a field that can disagree with the one it duplicates.
+
+## Configuration family discrimination
+
+When `RuleConfiguration` is defined, it will be an explicitly discriminated union whose family tag:
+
+- is carried inside the configuration value, not on the outer configured rule version;
+- draws its members from the existing `ResolvedSlotKind` vocabulary;
+- leaves each family's own inner discriminant from Decision 074 unchanged, so `type`, `policyType` and `strategy` keep their accepted names and meanings.
+
+No second `slotKind` field is placed on the configured rule version itself. The envelope's five elements stand as recorded above.
+
+This is a new architectural choice made here. It is not implied by Decision 081, which placed `slotKind` on the stable `Rule` and said nothing about configuration, nor by Decision 074, which named the inner discriminants without addressing how families are told apart.
+
+## Why a family tag is necessary, and why it reuses ResolvedSlotKind
+
+Four shapes were considered and three rejected.
+
+**No family tag, discriminating on the inner discriminants alone**, was rejected. `GOAL_POLICY` configuration has no variant discriminant of any kind — Decision 074 gives it four flat boolean fields — so no inner-discriminant scheme can distinguish it from another family. Independently, inner literals repeat across families: `PERCENTAGE_SPLIT` appears under `strategy` for top priorities and for the lower-priority pool, and under `policyType` for the leftover policy, so a single flat union would carry arms sharing one discriminant value as soon as those families are defined.
+
+**Discriminating by which payload key is present** was rejected. PFOS-ENG-01 §47.8 requires discriminated unions rather than loosely structured objects, and key presence is the shape it names. It makes a mixed payload undetectable rather than impossible, and it gives imported or restored data no single field to validate, which PFOS-ENG-00 §29.1 and PFOS-ENG-01 §37 both require, and no clean way to satisfy §47.9's requirement that unknown rule variants be rejected.
+
+**A new parallel family vocabulary** was rejected. It would duplicate `ResolvedSlotKind` under a second name and replace a plain equality relationship with a mapping that can itself drift. Decision 081 refused a second name for the precedence levels on the same grounds.
+
+**A generic or mapped type carrying no runtime discriminator** was rejected. Type parameters erase at run time, so a runtime tag would still be required to deserialise safely, and a type parameter on the version would propagate into any collection of versions and reach the generic selector Decision 079 already ships.
+
+Reusing `ResolvedSlotKind` therefore wins by elimination rather than by preference, and it keeps one vocabulary rather than two — the property Decision 081 valued when it recorded that the slot kind is a transcription of an accepted contract rather than a new vocabulary.
+
+## The cross-object invariant, and its cost
+
+The choice above creates an invariant spanning two objects:
+
+```text
+configuration.slotKind === Rule.slotKind
+```
+
+The cost is stated plainly: these are two fields that can disagree.
+
+Decision 081 refused a stored precedence level, Decision 083 refused a dated status beside the version timeline, and Decision 085 refused an independent `terminatesRule` flag, each on that same objection.
+
+The distinguishing fact here is that in every one of those cases the redundant value was derivable from a field that already existed, so storing it bought nothing. A configuration's family is not derivable from the configuration value itself — that is precisely what makes the tag necessary — and it must be available at run time for safe discrimination and for validating untrusted persisted input.
+
+The redundancy is therefore accepted deliberately rather than overlooked.
+
+## No validator, no error code, and no aggregate contract
+
+No validator is authorised for the invariant above, and no error code is registered for it.
+
+No accepted contract pairs a `Rule` with its versions. `validateDistinctRuleVersionEffectiveStarts` takes one rule's versions alone, `validateDistinctAuthoredScopes` takes rules alone, and Decision 085 recorded the same absence when it deferred the retirement invariant. This invariant joins that one as a second and independent reason such a contract is wanted; whether one should exist is not settled here, and no aggregate contract is authorised.
+
+Decision 073's convention holds: a code is named once the behaviour it reports is specified.
+
+## RuleVersion metadata remains unresolved
+
+PFOS-ENG-01 §41 lists `createdAt`, `versionNumber`, `supersedesVersionId` and `changeReason` on `RuleVersion`. This decision neither includes nor excludes any of them.
+
+Decision 081 deferred `versionNumber`, `supersedesVersionId` and `changeReason` to the `RuleVersion` payload decision. Because this decision is a split of that work and does not define the payload, that deferral is re-targeted here to the decision that completes the `RuleVersion` contract, so it is not left pointing at a decision which declined it.
+
+`createdAt` was never superseded and appears in no deferral list. PFOS-ENG-01 §18 requires a created timestamp of every permanent rule, and Decision 081 cited that requirement as live when it argued that a product default is not a rule.
+
+Two reasoning errors are excluded explicitly, because both are readily available and both are invalid.
+
+That no resolution path reads a field is not evidence that the field is outside the contract. Decision 079 excludes a version number, a superseding identifier and a creation timestamp from version selection, and Decision 080 forbids a timestamp tie-break. Neither says anything about contract membership.
+
+That the domain may not read a clock does not exclude a timestamp from a domain contract. PFOS-ENG-00 §13.4 forbids calling for the current time inside a deterministic engine function; it does not forbid carrying a moment supplied by another layer, and `ResolvedRuleSet.resolvedAt` already carries one.
+
+No ownership is assigned. This decision does not place `createdAt` with persistence, with audit, with the application layer, or anywhere else. No accepted decision makes that choice, and making it here would settle a question outside this decision's scope.
+
+## Configuration blockers, recorded and not resolved
+
+**`GLOBAL_OBLIGATION` — income-source eligibility and exclusion have no accepted representation.** PFOS-ENG-01 §12.2 lists eligible and excluded income sources among the configurable fields, §12.5 supplies exclusion semantics, and Decision 080 records that an eligibility or exclusion determination removes an additive obligation as a skip reporting `RULE_SKIP_INCOME_SOURCE_EXCLUDED`, so the concept reaches the skip channel. `ResolvedGlobalObligation` carries no corresponding field. §42.1's `eligibleIncomeSourceIds: ["all"]` is not adopted: a magic sentinel inside an array of identifiers is excluded by PFOS-ENG-00 §14's opacity requirement and by §29.1's treatment of imported content as untrusted. This is adjacent to Blocker F, which remains open.
+
+**`LOWER_PRIORITY_POOL`, for the `FIXED_AMOUNTS` strategy — the destination `sequence` has no accepted authoring source.** Decision 074 declares `ResolvedPoolFixedAmount.sequence` financially meaningful and lists it among the orderings the Rule Engine owns, and no accepted source establishes that a user authors it. It must not be derived from array order, from identifiers, or from repository order: Decision 080 excluded exactly those sources for the two equivalent gaps it recorded, PFOS-ENG-00 §14 keeps identifiers opaque, and §32 Invariant 11 forbids repository order from changing a result. Decision 082's observation that no bucket-owned rule could supply such an order is an obstacle to per-bucket authoring rather than a statement that a whole-pool rule authors it. PFOS-ENG-01 §14.2's "Priority ranks" is not this field: Decision 074 assigns pool priority rank to Allocation Engine bucket state as a residual-cent sort key.
+
+**`ALLOCATION_BASIS` — no accepted user-authoring semantic is established.** Decision 074 fixes the vocabulary and Decision 081 gives the kind a slot, but Decision 080 records that no accepted source names a default basis and places the question adjacent to Blocker F. Deriving a shape from an accepted enumeration is not the same as establishing that a user authors it, and this decision does not.
+
+**`TOP_PRIORITIES` — the authored treatment of rank under `PERCENTAGE_SPLIT` contains a tension between accepted sources.** Decision 082 records normatively that member bucket identifiers, ranks and shares are versioned configuration, without a strategy qualifier, while its own summary describes member buckets as carrying their ranks or shares. Decision 074's `ResolvedTopPriorityShare` extends an entry that requires a rank, and §42.3's percentage example carries none. Decision 075 confirms that §13.1's duplicate-priority-positions bullet stands, and Decision 076 finds §13.1 binding under either strategy. This decision resolves none of that, and it does not supersede §42.2 or §42.3. The question belongs to the payload decision, which must also perform any specification supersession explicitly rather than by implication.
+
+**`GOAL_POLICY` and `GOAL_UNTIL_TARGET` — two authored fields are reachable from two places.** Decision 074 places `stopAtTarget` and `allowManualExcess` both on `ResolvedGoalPolicy` and inside the `GOAL_UNTIL_TARGET` variant of `FundingRuleConfig`. A bucket authoring both a goal policy and a goal-until-target funding rule would author the same two values twice, and they could disagree. Decision 074 accepted both and is not amended here. The tension is recorded and not resolved.
+
+**`obligationId` — provenance is unattributed.** `ResolvedGlobalObligation.obligationId` is non-optional and no accepted source says whether it is the rule's own identity or names a separate entity. Recorded and not resolved.
+
+## No configuration arm is authorised
+
+No arm of `RuleConfiguration` is defined or authorised by this decision, for any of the eight slot kinds: `ALLOCATION_BASIS`, `GLOBAL_OBLIGATION`, `TOP_PRIORITIES`, `REQUIRED_FUNDING`, `LOWER_PRIORITY_POOL`, `LEFTOVER_POLICY`, `ROLLOVER_POLICY` and `GOAL_POLICY`.
+
+Findings about how close any individual family may be to definition are discovery material for the payload decision and carry no authority here.
+
+In particular, no partial `RuleConfiguration` is authorised, and no closed union missing a V1 family may be declared on the strength of this decision.
+
+## Decision 079 compatibility
+
+Both eventual variants of a rule version must satisfy `RuleVersionEffectivePeriodLike`.
+
+`TerminatingRuleVersion` already does, and its shipped tests prove it structurally. The eventual configured arm satisfies it through the `ruleVersionId` and `period` elements the envelope above requires, and because its period is `RuleEffectivePeriod` itself, satisfaction is immediate rather than incidental.
+
+The consequence is that `selectRuleVersionEffectiveOn` will accept a collection of rule versions and return the caller's own object with its discriminant intact, with no change to Decision 079, to its implementation, or to `RuleVersionEffectivePeriodLike`. This is the promise that shape's documentation already records — that a future `RuleVersion` will satisfy it structurally without either type changing — carried forward to the second arm.
+
+Decision 079 remains selection-only and is unchanged.
+
+## No implementation is authorised
+
+After this decision:
+
+- `TerminatingRuleVersion` remains the only concrete rule-version arm in the codebase;
+- `ConfiguredRuleVersion` does not exist;
+- `RuleVersion` does not exist;
+- `RuleConfiguration` does not exist;
+- `RuleVersionKind` does not exist and is not wanted.
+
+This is intentional. It follows the discipline of Decision 083, which fixed the stopping constraint in full while recording that the stop half was not implementable until the terminating representation was defined — a deferral Decision 085 then discharged.
+
+## No persisted contract changes
+
+No field of `ResolvedRuleSet` changes, and no `schemaVersion` increment is authorised.
+
+An authored rule version is not part of `ResolvedRuleSet`. A Plan Snapshot holds rule versions by reference: PFOS-ENG-01 §20 records that a snapshot may include or reference them, and Decision 074 keeps `sourceRuleVersionIds` as references identifying the versions that produced the resolved values. Introducing an authored envelope therefore changes no persisted resolved contract.
+
+`sourceRuleVersionIds`, the Plan Snapshot design, and stop provenance are untouched.
+
+Decisions 074, 078, 079 and 085 are unamended.
+
+## Deliberately deferred
+
+- The `RuleConfiguration` payload and every one of its arms.
+- `createdAt`, `versionNumber`, `supersedesVersionId` and `changeReason` on `RuleVersion`.
+- A contract pairing a `Rule` with its versions, and the two invariants that await it.
+- The retirement invariant's validator and any error code it would report.
+- The prospectivity check and the authoring layer that supplies its date.
+- Owner-and-kind authoring legality.
+- Resolver population, evaluation-context population, Blocker C and Blocker F.
+- `sourceRuleVersionIds` treatment for a stop, and skip or explanation emission for a stop.
+- `ResolvedGlobalObligation.sequence`, `ResolvedFundingRule.sequence` and `ResolvedPoolFixedAmount.sequence`.
+- Missing product-default values and product-default provenance.
+- Plan Snapshot design, and all Milestone 3 allocation behaviour.
+
+## Why
+
+Decision 085 fixed the terminating arm and left the configured arm, the union and any kind vocabulary to a single payload decision. That decision cannot be written yet: three configuration families cannot be represented without inventing semantics, and a fourth carries an unresolved tension between accepted sources.
+
+What can be settled ahead of the payload is everything that does not depend on any arm — the discriminant that tells the two variants apart, the elements a configured version must carry, which period type it uses, and how configuration families will be told apart at run time. Settling those now makes the payload decision shorter, and prevents each of them from being decided implicitly by whichever implementation lands first.
+
+The family-tag question in particular cannot be deferred without cost. It is not a property of any one arm, it constrains all of them, and an implementation that discovered the need for a tag while defining the fourth or fifth arm would have to reshape the first three.
+
+## Alternatives Considered
+
+Defining `RuleConfiguration` now over the families whose payloads are derivable, and deferring the rest, was rejected. It would declare a closed union missing V1 families while `Rule.slotKind` continued to admit them and `validateDistinctAuthoredScopes` continued to range over them, producing rules that are addressable but not authorable. Where a family is ready only in part, it would also make an authored strategy vocabulary drift from Decision 074's accepted one, which is the drift `ResolvedSlotKind` was shaped to prevent.
+
+Recording nothing until the payload is ready was rejected. It would leave the family-tag question to be settled implicitly by an implementation, and it would leave Decision 085's identification of the configured literal unperformed.
+
+Placing the family tag on the configured rule version rather than inside the configuration was rejected. It would put a second `slotKind` beside Decision 081's stable `Rule.slotKind` in the same position in the object graph, which reads as a duplicate address rather than as a payload discriminant, and it would enlarge an envelope this decision deliberately leaves open.
+
+Settling the §41 metadata fields here was considered and rejected. None of the four is needed to decide family discrimination; the two arguments most readily available for excluding them are both invalid for the reasons recorded above; and settling them would have required an ownership choice no accepted decision supports.
+
+Clarifying the top-priority rank tension here was considered and rejected. Resolving it would settle the shape of a configuration arm, which is exactly the work this decision defers.
+
+## Tradeoffs
+
+The envelope is a minimum rather than a closed field list, so a reader learns what a configured rule version must carry without learning what it may not carry.
+
+A redundancy is accepted deliberately: a configuration's family is recorded in the configuration while the same family is recorded on the rule, and the two can disagree until a contract pairing them exists.
+
+The `RuleVersion` contract now arrives across at least three decisions rather than one, and this decision ships no code at all.
+
+Two invariants are now known and unenforceable for the same missing reason, which concentrates the cost of having no rule-and-versions contract rather than spreading it.
+
+## Consequences
+
+The configured discriminant, the minimum envelope, the configured period type and the family-discrimination architecture are fixed, and none of them remains open to implicit settlement by an implementation.
+
+`TerminatingRuleVersion` remains the only concrete rule-version arm. Milestone 2 gains no new implementable contract from this decision.
+
+Decision 081's deferral of `versionNumber`, `supersedesVersionId` and `changeReason` is re-targeted to the decision completing the `RuleVersion` contract, and `createdAt` joins them as an open question.
+
+No validator is authorised, no code registry changes, no `ResolvedRuleSet` field changes, and no `schemaVersion` change.
+
+Blocker C and Blocker F remain open and continue to gate the work they name.
+
+## Future Review Trigger
+
+Reconsider when any recorded configuration blocker is resolved, since each one unblocks an arm of the configuration union; when the `RuleVersion` metadata questions are taken up, since the envelope's field list closes then; when a contract pairing a rule with its versions exists, since this decision's cross-object invariant and Decision 085's retirement invariant become enforceable together; or if a future accepted source requires a rule-version variant beyond configured and terminating, since the conceptual two-variant model would then need revisiting.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
