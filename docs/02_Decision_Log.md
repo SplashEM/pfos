@@ -7516,6 +7516,273 @@ Reconsider when the canonical ordering key is adopted, since `globalObligations`
 
 ---
 
+# Decision 092: The ResolvedRuleSet Schema-Version Transition for Decisions 090 and 091
+
+**Status:** Accepted
+**Related:** Decisions 023, 056, 068, 071, 074, 078, 086, 089, 090, 091
+**Scope:** Architecture, Engineering, Data
+
+## Decision
+
+The current `ResolvedRuleSet.schemaVersion` is ratified as `1`, naming the seven-member `ResolvedGlobalObligation` shape currently shipped in source.
+
+The combined shape decided by Decisions 090 and 091 is `schemaVersion` `2`.
+
+The two incompatible changes — Decision 090's removal of `ResolvedGlobalObligation.sequence` and Decision 091's rename of `obligationId` to `ruleId` — are carried by one transition from `1` to `2`. No numeric value other than `1` and `2` is selected, reserved or implied.
+
+This decision applies Decision 074's versioning rule. It adopts no canonical ordering key, defines no `GLOBAL_OBLIGATION` payload, authorises no persistence or migration work, and does not make `GLOBAL_OBLIGATION` materializable.
+
+## What schemaVersion versions
+
+`ResolvedRuleSet.schemaVersion` is the schema version of the persisted `ResolvedRuleSet` contract.
+
+Decision 074 places that version field on `ResolvedRuleSet` and records that the resolved set is persisted inside a Plan Snapshot, so the shape is a contract whose incompatible change requires an increment.
+
+PFOS-ENG-00 §40 lists an application version, a database schema version, a backup format version and a domain snapshot schema version, and records that these versions serve different purposes and must not be conflated. That section proves that PFOS carries multiple version classes which must be kept apart.
+
+Applying that separation:
+
+- `ResolvedRuleSet.schemaVersion` is not the IndexedDB or database schema version governed by PFOS-ENG-00 §26 and Decision 056.
+- It is not the backup format version governed by PFOS-ENG-00 §27.
+- It is not the application version.
+
+PFOS-ENG-01 §41 lists a conceptual `schemaVersion` on `PlanSnapshot`, and PFOS-ENG-02 §69 lists one on `Allocation`. Neither exists in source, and no accepted source establishes whether `ResolvedRuleSet.schemaVersion` is identical to, subordinate to, coordinated with, or independent from either of them.
+
+This decision does not determine that relationship. It decides the version of the persisted `ResolvedRuleSet` contract and nothing else, and it assigns no semantics to `PlanSnapshot.schemaVersion` or to `Allocation.schemaVersion`.
+
+## PFOS-ENG-00 §26 is not authority for this baseline
+
+PFOS-ENG-00 §26 states that V1 may begin at schema version 1. That section is titled IndexedDB Schema Versioning and its rules are database migration rules, so it governs the database schema version under Decision 056.
+
+It is not authority for the value of `ResolvedRuleSet.schemaVersion`. Borrowing its number would be the conflation PFOS-ENG-00 §40 forbids.
+
+## The baseline is ratified as 1
+
+No accepted decision previously fixed the numeric baseline. Decisions 090 and 091 each record that absence.
+
+The repository's only numeric evidence is the fixture in `resolved-rule-set.test.ts`, which uses `1` for the seven-member shape.
+
+Decision 074 requires an increment for an incompatible change. Preserving `1` for the shipped shape and assigning `2` to the new shape avoids making one numeric value denote two different shapes.
+
+This decision is the appropriate place to ratify a previously implicit baseline, because schema versioning is its direct subject. Decision 090's objection — that fixing a value is a commitment about a persisted value rather than about a contract's shape — was a reason not to fix one inside a decision about a field's disposition, and does not apply here.
+
+This is not a pre-persistence exception. It applies Decision 074. Decision 090's refusal to treat the absence of a persistence layer as an exception to the versioning rule stands, and nothing here creates one.
+
+## Version mapping
+
+```text
+schemaVersion 1
+
+ResolvedGlobalObligation {
+  obligationId
+  ruleVersionId
+  destinationBucketId
+  rateBasisPoints
+  incomeBasis
+  maximumAmount?
+  sequence
+}
+```
+
+```text
+schemaVersion 2
+
+ResolvedGlobalObligation {
+  ruleId
+  ruleVersionId
+  destinationBucketId
+  rateBasisPoints
+  incomeBasis
+  maximumAmount?
+}
+```
+
+Under `schemaVersion` 2, `ruleId` is typed `RuleId` and `ruleVersionId` is typed `RuleVersionId`. Decision 091 records that adopting those aliases is not itself an incompatible change, both being semantic aliases of `EntityId` under Decision 078 on the terms Decision 074 fixed for `PlanVersionId`.
+
+`schemaVersion` versions the persisted `ResolvedRuleSet` contract as a whole, not merely this nested interface. The nested `ResolvedGlobalObligation` change is the only contract difference in this transition; every other `ResolvedRuleSet` member is unchanged between the two versions.
+
+## One transition, not two
+
+Decision 074's rule exists so that a stored resolved set's shape is identifiable.
+
+The intermediate shape — `sequence` removed while `obligationId` is retained — was never persisted and was never shipped, because neither Decision 090 nor Decision 091 authorised any source change and no persistence layer exists. Assigning it a version would name a shape no datum ever held.
+
+Decision 090 anticipated this in recording that versioning an intermediate shape would document a transition no stored data ever held. Decision 091 concluded that both changes should be handled together by one transition over the combined decided shape.
+
+## What this decision does about migration
+
+Decision 074 requires the incompatible contract change to receive a schema-version increment. This decision satisfies that requirement by moving the decided `ResolvedRuleSet` contract from `schemaVersion` 1 to `schemaVersion` 2.
+
+No persisted `schemaVersion`-1 `ResolvedRuleSet` or Plan Snapshot data exists in the repository or in any implemented persistence layer. `src/infrastructure` contains no implementation, no `PlanSnapshot` type exists in source, no repository or IndexedDB code exists, no migration machinery exists, and `ResolvedRuleSet` is constructed only in one test file.
+
+This decision therefore requires no data transformation and no migration implementation for existing data, because there is no existing persisted data to transform.
+
+This is not an exception to Decision 074's versioning rule.
+
+Future read-migration, dual-version support, rejection behaviour and migration-engine design remain undefined and are not decided here.
+
+No general rule is established that every schema-version transition necessarily requires a data migration, and no general data-migration requirement is attributed to Decision 074. Decision 074 requires an increment; what else a transition may require is not settled by Decision 074 and is not settled here.
+
+PFOS-ENG-00 §26's migration rules are neither invoked nor extended here. They govern the database schema version, and §40 keeps that version class separate from this one. Nothing in this decision limits §26 within its own domain.
+
+## What Decision 074 requires of history
+
+Decision 074 requires that existing Plan Snapshots continue to reproduce the rules under which they were created. That is a reproduction-of-rules requirement. Constitution Principle 11, PFOS-ENG-01 §19.1 and PFOS-ENG-00 §32 Invariant 10 point the same way.
+
+Whether a stored snapshot would retain old field names or be migrated on read is unspecified by every accepted source. No such snapshot exists, and this decision invents no guarantee about one.
+
+## Forward and backward compatibility are undefined
+
+No accepted source specifies how a reader of one version should behave when presented with another, in either direction.
+
+PFOS-ENG-00 §29.2 and PFOS-ENG-01 §47.9 require unknown rule variants to be rejected, which is a payload concern rather than a schema-version concern. PFOS-ENG-00 §27's restore flow validates the backup format version, a different class under §40. Neither governs this question.
+
+Both directions are recorded as undefined and deferred. Importing an older contract, read-migration and dual-version support are likewise undecided. No validator, no error code and no unsupported-schema behaviour is authorised or implied, and no compatibility mechanism is created or authorised.
+
+## Why the current changes are settled enough to version
+
+The incompatible changes before this decision are sufficiently settled to version:
+
+- `sequence` is removed by Decision 090;
+- `obligationId` is renamed `ruleId` by Decision 091;
+- the resulting six-member `ResolvedGlobalObligation` shape is decided.
+
+No remaining open question currently prevents assigning the combined decided shape `schemaVersion` 2.
+
+This decision does not define an exhaustive taxonomy of which future semantic, serialization, ordering or structural changes require another schema-version increment. Decision 074 continues to govern future incompatible persisted-contract changes.
+
+## The canonical key does not block this transition
+
+This decision does not need the canonical ordering key in order to identify the two contract shapes being versioned here. The difference between the two versions is fully specified by the removal of `sequence` and the rename of `obligationId` to `ruleId`.
+
+Decision 091 already made `ruleId` and `ruleVersionId` total candidates for the later canonicalization decision.
+
+No canonical key is adopted by this decision.
+
+Whether a later change to persisted canonical ordering itself requires another schema-version increment is not decided here, and remains governed by Decision 074's incompatible-contract-change rule.
+
+## The GLOBAL_OBLIGATION payload does not block this transition
+
+`RuleConfiguration` is authored-side and is not itself part of `ResolvedRuleSet`. Decision 086 records that an authored rule version is not part of `ResolvedRuleSet`, that a Plan Snapshot holds rule versions by reference, and that introducing an authored envelope therefore changes no persisted resolved contract.
+
+No currently accepted payload decision requires another change to the six `ResolvedGlobalObligation` fields.
+
+The payload blocker therefore does not prevent taking the current schema transition.
+
+Decision 091's caveat is preserved: a later accepted payload decision may reveal a separate incompatible `ResolvedRuleSet` change, in which case Decision 074 governs that future change.
+
+## The first Plan Snapshot persisted after this transition
+
+No persisted `schemaVersion`-1 `ResolvedRuleSet` data exists today.
+
+Once the implementation authorised below becomes the current PFOS producer of resolved rule sets, a Plan Snapshot produced and persisted by that implementation should embed a `ResolvedRuleSet` carrying `schemaVersion` 2.
+
+The first Plan Snapshot produced and persisted by the current PFOS implementation after that transition should therefore carry a `schemaVersion` 2 `ResolvedRuleSet`.
+
+This decision makes no claim that `schemaVersion`-1 data can never exist under some future accepted compatibility, import or history mechanism. Forward compatibility, backward compatibility, importing an older contract, read-migration and dual-version support all remain undecided, and no such mechanism is created or authorised here.
+
+This says nothing about `PlanSnapshot.schemaVersion`, whose relationship to this version is undetermined as recorded above.
+
+## Decision 074 is applied, not changed
+
+This decision applies Decision 074. It does not supersede Decision 074, does not amend it, does not narrow it and does not except it. Decision 074's Status remains Accepted and its schema-version rule stands exactly as Decisions 089, 090 and 091 each preserved it.
+
+Decisions 090 and 091 remain the decisions that changed the contract shape. This decision assigns schema versions to those already-decided shapes and changes no member itself.
+
+Decision 074 states its rule twice, conditionally in its Consequences and unconditionally in its closing line. Decision 090 settled the unconditional reading, and this decision applies the settled reading without reopening it. A later editorial cross-reference in Decision 074 is recommended and is not part of this decision.
+
+## Authorised implementation
+
+A later bounded implementation unit is authorised to:
+
+- remove `ResolvedGlobalObligation.sequence`;
+- rename `obligationId` to `ruleId`;
+- type `ruleId` as `RuleId`;
+- type `ruleVersionId` as `RuleVersionId`;
+- correct the stale `sequence` documentation;
+- establish a named `ResolvedRuleSet` schema-version constant with the value `2`;
+- update `ResolvedRuleSet` fixtures and tests from 1 to 2;
+- update `ResolvedGlobalObligation` fixtures and tests;
+- add compile-time protection that `sequence` is absent;
+- add compile-time protection that `obligationId` is absent;
+- retarget any `@ts-expect-error` currently using `sequence` solely for immutability testing.
+
+Nothing else. In particular this decision authorises no persistence system, no migration engine, no old-version reader, no new-version compatibility layer, no backward-reader behaviour, no forward-reader behaviour, no import compatibility, no unsupported-schema validator, no error code, no canonical ordering key, no `GLOBAL_OBLIGATION` `RuleConfiguration`, no resolver population, no evaluation-context population, no Blocker C work, no Blocker F work, and no Milestone 3 behaviour.
+
+## What this decision closes
+
+Decision 090's deferred numeric schema-version decision.
+
+Decision 091's combined schema-version transition.
+
+The version gate preventing implementation of the `sequence` removal.
+
+The version gate preventing implementation of the `obligationId` to `ruleId` rename.
+
+## What this decision does not close
+
+The canonical ordering key. The `GLOBAL_OBLIGATION` `RuleConfiguration` payload. The contract pairing a `Rule` with its versions. Resolver population. Evaluation-context population. Blocker C. Blocker F. The `resolvedRuleSetId` question. Forward compatibility. Backward compatibility. Migration architecture.
+
+`GLOBAL_OBLIGATION` remains unmaterializable. A shape can be versioned without the slot becoming resolvable.
+
+## Unchanged by this decision
+
+No engineering specification text is superseded, amended or replaced. PFOS-ENG-00, PFOS-ENG-01 and PFOS-ENG-02 are not altered.
+
+Decisions 023, 056, 068, 071, 074, 078, 086, 089, 090 and 091 are unamended. Every other member and field of `ResolvedRuleSet` is unchanged, `sourceRuleVersionIds` is unchanged, and Plan Snapshot design is unchanged.
+
+`RuleConfiguration`, `RuleVersion`, `ConfiguredRuleVersion` and `RuleVersionKind` remain as Decision 086 left them, and `TerminatingRuleVersion` remains the only concrete rule-version arm in source.
+
+## Why
+
+Decisions 090 and 091 each decided a contract change and each deferred its version — Decision 090 because no baseline existed and the shape was not yet settled, Decision 091 because it settled the shape and left the number.
+
+Both reasons are now discharged. The shape is decided, and the baseline can be ratified in the one decision whose subject it is.
+
+Taking the two changes as one transition follows from what a version is for. A version number identifies the shape a stored resolved set holds, and the intermediate shape was never held by anything.
+
+## Alternatives Considered
+
+Assigning the new shape `schemaVersion` 1, on the ground that nothing has ever been persisted and numbering could begin at the first storable shape, was considered and rejected. It would make one numeric value denote two different shapes across the repository's own history, which defeats the identification Decision 074's rule exists to provide, and it is a renumbering rather than the increment Decision 074 requires.
+
+Two separate transitions, one for each decision, was rejected: the intermediate shape was never persisted and never shipped.
+
+Selecting a non-numeric versioning scheme was rejected: Decision 074 types the member `number`, and the shipped contract tests enforce it.
+
+Treating PFOS-ENG-00 §26's database schema version 1 as the baseline was rejected under §40, which requires the version classes not to be conflated.
+
+Determining the relationship between `ResolvedRuleSet.schemaVersion` and the conceptual `PlanSnapshot.schemaVersion` was considered and rejected. No accepted source establishes it, nothing in this transition requires it, and settling it here would decide a question outside this decision's subject.
+
+Deferring the transition until the canonical key or the `GLOBAL_OBLIGATION` payload is settled was rejected: neither is needed to identify the two shapes being versioned, and Decision 074 governs any future incompatible change on its own terms.
+
+Splitting the baseline ratification into a separate prior decision was rejected: it would answer one uncontested question with no intervening dependency.
+
+## Tradeoffs
+
+`schemaVersion` 1 names a source contract shape that was shipped but was never persisted by the repository as it exists today.
+
+Forward and backward compatibility remain undefined, so the first reader implementation will arrive without an accepted rule for encountering an unexpected version. That is recorded rather than resolved, because no accepted source supplies one and no reader exists.
+
+The relationship between this version and the conceptual `PlanSnapshot.schemaVersion` is left open, so a future persistence design must settle it rather than inherit it.
+
+The implementation authorised here changes a contract that nothing yet consumes, so the change is verifiable only by contract tests until a resolver exists.
+
+## Consequences
+
+`ResolvedRuleSet.schemaVersion` has a ratified baseline of 1 and a decided new value of 2.
+
+The implementation gate on Decision 090's `sequence` removal and Decision 091's `obligationId` to `ruleId` rename is lifted, within the bounded authorisation above.
+
+A Plan Snapshot produced and persisted by the current PFOS implementation after that transition should carry a `schemaVersion` 2 `ResolvedRuleSet`.
+
+`GLOBAL_OBLIGATION` remains unmaterializable, and Blocker C and Blocker F remain open.
+
+## Future Review Trigger
+
+Reconsider when a persistence layer or a stored Plan Snapshot is introduced, since forward compatibility, backward compatibility and migration architecture become live then, and the relationship to `PlanSnapshot.schemaVersion` must be settled with them; when a canonical ordering key is adopted, since whether that change requires a further increment is governed by Decision 074 and is not decided here; when the `GLOBAL_OBLIGATION` payload decision supplies the arm, since it may reveal a separate incompatible `ResolvedRuleSet` change; if any other incompatible persisted-contract change is decided, since Decision 074 requires it to be versioned; or if an accepted source ever relates `PlanSnapshot.schemaVersion` or `Allocation.schemaVersion` to this version.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
