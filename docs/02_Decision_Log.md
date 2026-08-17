@@ -6416,6 +6416,290 @@ Reconsider if a future accepted source constrains rank beyond uniqueness, gives 
 
 ---
 
+# Decision 088: Income-Source Applicability Semantics for GLOBAL_OBLIGATION
+
+**Status:** Accepted
+**Related:** Decisions 015, 016, 017, 022, 068, 073, 074, 078, 080, 081, 082, 085, 086, 087
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+A `GLOBAL_OBLIGATION` rule's applicability to income sources is one authored policy, and exactly one of three semantics is active for a given rule version:
+
+- universal applicability, under which the obligation applies to every income source and no identifier set is carried;
+- only explicitly listed sources, under which the obligation applies to an income source if and only if that source is in a set the version carries;
+- every source except explicitly listed sources, under which the obligation applies to an income source if and only if that source is not in a set the version carries.
+
+The two listed semantics carry a non-empty set of income-source identities.
+
+Applicability is conceptually required and non-nullable. Missing data never means universal applicability.
+
+The three labels above are explanatory semantic labels. This decision fixes no persisted literal spelling, no discriminant field name, no identifier-set field name, no source type, no enum and no union.
+
+## What this decision is, and what it is not
+
+Decision 086 recorded that income-source eligibility and exclusion have no accepted representation, and placed the question adjacent to Blocker F.
+
+This decision settles the authored semantics: how many applicability policies there are, what each means, and what may not represent them. It settles nothing about how those semantics are spelled, carried, or typed.
+
+The `GLOBAL_OBLIGATION` payload decision chooses the discriminant field name, the literal spellings, the identifier-set field name and the complete arm structure. It must preserve the three semantics established here exactly, and it must name its persisted literals itself rather than leaving them to an implementation.
+
+This decision defines no arm of `RuleConfiguration`, no other member of a `GLOBAL_OBLIGATION` configuration, and authorises no implementation.
+
+It follows the method of Decision 087, which settled a semantic ahead of the shape that would express it, and of Decision 086, which settled what did not depend on any arm ahead of the arms.
+
+## Eligibility and exclusion are one policy, not two dimensions
+
+PFOS-ENG-01 §12.2 lists "Eligible income sources" and "Excluded income sources" among the tithing rule's configurable fields. They are two authoring gestures for one policy rather than two simultaneously active independent dimensions.
+
+§12.1 states the default as a single `Scope`, not as a pair of lists. Decision 080 speaks of "an explicit eligibility or exclusion determination", and PRD §15 of income sources "marked eligible or excluded". Both are disjunctive. No accepted source describes the two applying together, and none says what a source appearing in both, or in neither, would mean.
+
+Two optional identifier collections is the loosely structured shape §47.8 forbids. It admits a contradictory record that PFOS-ENG-00 §29.1 and §37 require be rejected rather than silently resolved, and resolving such a record inside the engine would be a silent financial decision under Constitution Principle 4.
+
+Exactly one semantic is therefore active, and a conflicting pair is unrepresentable rather than merely invalid — the standard Decisions 085 and 086 both applied.
+
+## The three semantics are derived, not invented
+
+Universal applicability transcribes §12.1's `Scope: All eligible income`, and matches Decision 017 and PRD §12, under which income sources inherit the global allocation plan by default.
+
+Only explicitly listed sources transcribes §12.2's "Eligible income sources".
+
+Every source except explicitly listed sources transcribes §12.2's "Excluded income sources", §10.2's "unless the income source is explicitly excluded from eligible income", and PRD §15's "or excluded".
+
+No fourth semantic has a textual basis in any accepted source, and none is introduced.
+
+## A caution for the payload decision
+
+§12.1, §12.4, §25 and Decision 016 all use "eligible income" for the amount-qualification question that Blocker F owns, while §12.2 uses "eligible income sources" for the applicability question settled here.
+
+The payload decision should choose vocabulary that keeps the two apart. That is a caution recorded for it, not a naming decision made here.
+
+## Empty sets
+
+A listed semantic's identifier set is semantically non-empty.
+
+An empty set under "every source except explicitly listed sources" would mean every source, which is universal applicability — one financial intent with two representations, defeating canonical form and making version comparison ambiguous.
+
+An empty set under "only explicitly listed sources" would mean no source, duplicating the terminating rule version Decision 085 established and expressing a stop with no date, which that decision rejected.
+
+Whether non-emptiness is expressed structurally, by a construction invariant, by a domain validator or by an import validator is not decided here. It belongs to the payload and validation decisions. No error code is registered or named.
+
+A non-empty set that matches no source in a given evaluation context remains valid. The obligation does not apply there, which is a resolution outcome rather than an authoring defect.
+
+## Duplicate identifiers and order
+
+The collection is a set. A repeated identifier changes neither membership nor non-membership, and no accepted source gives repetition any weight, count or ordering effect. Duplicate identifiers add no financial meaning.
+
+Order adds no financial meaning either. Two configurations differing only in the order of the same identifiers express the same authored intent.
+
+A persisted or imported duplicate is non-canonical and malformed, and no additional meaning may be assigned to it silently. This decision recommends that duplicates eventually be rejected rather than silently deduplicated, since normalising would rewrite what the user or the backup asserted, against Constitution Principles 4 and 12.
+
+No validator, normalisation, deduplication or error code is authorised.
+
+## Identifiers are opaque
+
+Income-source identities remain stable opaque `EntityId`s under PFOS-ENG-00 §14.
+
+No sentinel value may inhabit an identifier collection, including "all", "*" and "default". Decision 086 already recorded that §42.1's `["all"]` is not adopted, and an opaque identifier space cannot reserve a literal without a collision risk it can never rule out.
+
+No wildcard, name matching, category matching or type matching names an income source. §9 forbids rules applying because objects share names or categories, and §26 forbids resolution depending on localized display names.
+
+## Future income sources
+
+Under universal applicability, a future-created income source is in scope. That is Decision 017's stated behaviour.
+
+Under only explicitly listed sources, a future-created source is out of scope unless a later `RuleVersion` adds it.
+
+Under every source except explicitly listed sources, a future-created source is in scope unless a later `RuleVersion` excludes it.
+
+A rule version's set is fixed at creation under Decision 078. Changing scope creates a later `RuleVersion` under §18 and §19.2, prospective under Decision 022. Existing versions do not acquire or lose members after the fact.
+
+This asymmetry is why both listed semantics exist. "Only these" and "everything but these" are different intentions about a future the author cannot enumerate, and Constitution Principle 4 requires that choice to be stated rather than inferred.
+
+## Tithing scope
+
+When a tithing obligation is authored with §12.1's "all eligible income" scope, its source-applicability semantic is universal applicability.
+
+That is a correspondence and nothing more. This decision does not decide whether a tithing `Rule` is created automatically, whether an authoring interface preselects a semantic, whether an authoring service injects one, whether any value is a product-default constant, or whether a missing applicability value is defaulted or otherwise filled in.
+
+Missing applicability remains invalid and unrepresented. It is never universal applicability.
+
+Two facts from accepted authority bear on this and are recorded rather than established. Decision 081 states that a product default is not a rule, and Decision 080's enumeration of established product defaults contains no global obligation, so a tithing obligation exists only when authored. And because applicability is conceptually required, an authored obligation always states its semantic explicitly.
+
+## The Blocker F boundary
+
+Two questions are made explicit here so that each can be settled by the decision that owns it.
+
+Source applicability asks whether this authored obligation applies to this income-source identity. Its authority is §12.2's configurable fields and §10.2's qualifier. It is settled by this decision.
+
+Eligible-income computation asks whether a receipt or amount qualifies as eligible income, and how it is aggregated without double counting. Its authority is §12.4, §12.5 and Decision 016. It is Blocker F, and it remains open.
+
+An obligation contributes only where both hold.
+
+Decision 080's outcome is unchanged and Decision 080 is not amended. Its holding that an explicit eligibility or exclusion determination removes an additive obligation as a skip stands exactly as written. This decision makes the two underlying concepts explicit; it revises none of it.
+
+## Applicability is per rule version
+
+Applicability is authored per `GLOBAL_OBLIGATION` rule and carried in that rule's `RuleVersion` configuration. There is no shared global source filter.
+
+Multiple additive global obligations may each carry a different applicability semantic.
+
+Decision 074 keeps separately authored obligations independent and uncollapsed. Decision 080 makes accumulation the semantic of the only additive slot, with none displacing another. Decision 082 exempts `GLOBAL_OBLIGATION` from authored-scope uniqueness, so several global obligation rules legitimately coexist.
+
+A shared filter would collapse independently authored obligations into one scope and would let one rule's edit silently change another rule's behaviour, against Constitution Principle 12.
+
+## Ownership is unchanged
+
+`GLOBAL_OBLIGATION` rules are owned by `GLOBAL`. Decision 080 states that accumulation is within the global level and that no other §6 level authors a global obligation in V1.
+
+Income-source applicability is versioned configuration, not `Rule.owner`. This applies Decision 082's rule with the entity type changed: an identifier is stable Rule addressing only where it names the rule's owner, and everywhere else it is versioned configuration or a derived scope.
+
+No `INCOME_SOURCE`-owned `GLOBAL_OBLIGATION` is introduced, and no income-source entity applicability flag is introduced for V1.
+
+§5.2's "Exclude a reimbursement from tithing" is not evidence to the contrary. A reimbursement is a kind of receipt, which belongs with §12.5 and eligible-income computation.
+
+PRD §15's "Income sources may eventually be marked eligible or excluded" is future-tense and authorises no V1 property on the income-source entity. Such a property would also be one filter shared across all obligations, and would be entity state supplied through the evaluation context rather than authored configuration.
+
+`Rule.owner`, `RuleOwner` and `ResolvedSlotKind` are unchanged, and Decision 081 requires no amendment.
+
+## Historical determinism
+
+Historical applicability is determined from the `RuleVersion` effective for that historical date together with the income-source identity supplied in that historical evaluation context. Current repository state is never consulted.
+
+Universal applicability means the source this evaluation concerns, not every source that exists now. §25 supplies `Income source` for the event, so the question is a membership question over one identity and requires no enumeration of a source population.
+
+Whether a referenced income source currently exists is an authoring and import concern already named by lower authority. §21.1 makes a rule referencing a deleted income source a hard validation error, and §37 requires rejecting references to nonexistent entities. No code is named here for either.
+
+It is not a resolution-time question for a past date. The authored set lives in an immutable `RuleVersion`, §19.1 requires a version used in a confirmed allocation to remain reconstructable, and Constitution Principle 11 with PFOS-ENG-00 §32 Invariant 10 forbid a later administrative act from changing a historical result. Current deletion or status must not rewrite historical financial truth. This applies Decision 083's rule — current status is not historical financial truth — to a referenced entity rather than to a rule's own status.
+
+No archived-income-source lifecycle is invented. Archival in this corpus is a bucket concept, and no accepted source defines it for income sources.
+
+Where Decision 016's cross-source aggregation is later specified, the same applicability question is asked per source, and any population it ranges over is supplied by the evaluation context under §25 and §26 rather than read from current storage. This decision settles nothing further about that population.
+
+## Separation from IncomeBasis and PercentageBasis
+
+Four questions must stay distinct and must never be merged into one field or one semantic.
+
+Source applicability asks whether the obligation applies to this income source. `IncomeBasis` asks which amount of that source's income is the base. `PercentageBasis` asks against what denominator a percentage is taken. Eligible-income computation asks whether an amount qualifies at all, and remains with Blocker F.
+
+`PercentageBasis` is not a member of `ResolvedGlobalObligation`; Decision 074 places it on pool structures. No such member is added.
+
+§14.3 already requires percent-of-total and percent-of-remaining never to share an ambiguous field. The same discipline forbids fusing applicability into either basis: a rule that applies at zero percent and a rule that does not apply at all are different financial facts with different explanations under Constitution Principle 9.
+
+## Mapping to the existing skip code
+
+Universal applicability produces no non-applicable result from source scope.
+
+Under only explicitly listed sources, a source outside the set maps to `RULE_SKIP_INCOME_SOURCE_EXCLUDED`. Under every source except explicitly listed sources, a source inside the set maps to the same code.
+
+The ground is Decision 080's existing holding, and nothing more: an explicit eligibility or exclusion determination removes an additive obligation as a skip reporting that code. Decision 080 already writes the two gestures as one determination with one code, and the two listed semantics are those two gestures.
+
+No meaning is stated for the code beyond what Decision 080 establishes. It is not renamed, not split and not redefined, and its registered meaning is unchanged. No new skip code is introduced.
+
+Whether a skip record is emitted depends on resolver population and explanation emission, which Decisions 080, 085 and 086 defer. No skip-emission behaviour is authorised.
+
+## No resolved-contract field is required
+
+Source applicability requires no member on `ResolvedGlobalObligation`.
+
+The question is answered during resolution: it decides whether an obligation produces a resolved obligation or a skip. Decision 080 removes a non-applicable obligation as a skip rather than emitting it with a filter attached, so nothing needs to be preserved on the resolved contract in order to explain the outcome.
+
+Decision 086's observation that `ResolvedGlobalObligation` carries no corresponding field is therefore consistent with this decision rather than a gap it must close.
+
+`ResolvedGlobalObligation` and `ResolvedRuleSet` are unchanged, and no `schemaVersion` increment is authorised.
+
+## Future validation needs, and no codes
+
+Several needs are identified. None is authorised, and no code is named for any of them. Decision 073's convention holds: a code is named once the behaviour it reports is specified.
+
+A listed semantic's set is non-empty. No duplicate identifier appears within a set. Every referenced income source exists and is not deleted, which §21.1 and §37 already require while no accepted source names a code for it. Unknown variants are rejected on import, under §47.9 and PFOS-ENG-00 §29.2. And a rule carrying an obligation applicability value is in fact of slot kind `GLOBAL_OBLIGATION`, which is Decision 086's cross-object invariant rather than a new one, awaiting the same missing contract pairing a rule with its versions.
+
+## PFOS-ENG-01 §42.1 is not representation authority
+
+§42.1's `eligibleIncomeSourceIds: ["all"]` is insufficient as final representation authority for this field, and Decision 086 already recorded that the sentinel is not adopted.
+
+It must not be interpreted as establishing a sentinel-bearing identifier collection, the final payload shape, or a two-list shape.
+
+Correcting or replacing it belongs to the future `GLOBAL_OBLIGATION` payload decision, at the point it defines the arm. This decision performs no formal specification-shape supersession and supplies no replacement object shape. Nothing is superseded, PFOS-ENG-01 is not altered, and §42.1 stands as written while ceasing to be authority on this point.
+
+## Unchanged by this decision
+
+No specification text is superseded, amended or replaced.
+
+No persisted literal spelling is fixed for any of the three semantics. No discriminant field name, no identifier-set field name, no rate field, no destination field, no income-basis field, no maximum field and no enabled field is fixed. No source type, enum or union is introduced.
+
+No arm of `RuleConfiguration` is defined or authorised, for `GLOBAL_OBLIGATION` or any other slot kind, and no other member of a `GLOBAL_OBLIGATION` configuration is defined.
+
+`RuleConfiguration`, `RuleVersion`, `ConfiguredRuleVersion` and `RuleVersionKind` remain as Decision 086 left them. `TerminatingRuleVersion` remains the only concrete rule-version arm in source.
+
+No validator is authorised, no validator API is defined, no error code is registered or named, and no registry changes. No skip, warning or explanation code is added, redefined or split, and no skip-emission behaviour is authorised.
+
+`ResolvedGlobalObligation`, `ResolvedRuleSet`, `schemaVersion`, `sourceRuleVersionIds` and Plan Snapshot design are unchanged.
+
+`obligationId` provenance is untouched and remains as Decision 086 recorded it. `ResolvedGlobalObligation.sequence`, `ResolvedFundingRule.sequence` and `ResolvedPoolFixedAmount.sequence` remain without an accepted authoring source. `ALLOCATION_BASIS` authoring, the `GOAL_POLICY` and `GOAL_UNTIL_TARGET` duplication, and the `TOP_PRIORITIES` payload shape are untouched. The PFOS-ENG-01 §41 metadata questions are untouched. Resolver population, evaluation-context population, Blocker C, Blocker F implementation and all Milestone 3 behaviour remain outside this decision.
+
+Decisions 016, 017, 074, 078, 080, 081, 082, 085, 086 and 087 are unamended.
+
+## Why
+
+Decision 086 recorded this family as unrepresentable and named the reason: the only shape the corpus offers is §42.1's sentinel, which opacity forbids, beside two §12.2 fields whose interaction nothing defines.
+
+Both obstacles dissolve once the two fields are read as one policy. A single active semantic removes the need for a sentinel, removes the conflicting-lists state, and leaves an intent that can be explained to a user in one sentence under Constitution Principle 9.
+
+Separating source applicability from eligible-income computation is what makes the decision safe to take now. Applicability is a question about a source identity, answerable from authored configuration and the identity §25 already supplies. Eligible-income computation is a question about an amount, and it needs rules the corpus has not written. Settling the first commits nothing about the second.
+
+Stopping short of vocabulary is what keeps it inside Decision 086's boundary. The semantics are derivable from accepted sources; the spellings are not.
+
+## Alternatives Considered
+
+Two optional identifier collections, mirroring §12.2's two bullets literally, was rejected: it admits a source in both with no accepted resolution rule, it is the loose shape §47.8 names, and resolving the conflict inside the engine would be a silent financial decision.
+
+A sentinel inside the identifier collection, following §42.1, was rejected. Decision 086 already excluded it, and an opaque identifier space cannot reserve a literal safely.
+
+An absent value meaning universal applicability was rejected: Decision 085 refused silence as a stop instruction and Decision 086 refused it for `configuration`, both because §29.1 makes a truncated import indistinguishable from an authored act.
+
+Two semantics, with an empty exclusion set standing for universal applicability, was rejected. It discards §12.1's explicitly named scope and re-encodes "all" as absence of content, and it loses the future-source distinction that makes the two listed semantics different intentions.
+
+A semantic meaning "applies to no source" was rejected: it duplicates Decision 085's terminating version and expresses a stop without a date.
+
+Reusing §12.2's "Enabled or disabled" was rejected: Decision 085 refused `configuration.enabled` as a lifecycle mechanism, and enablement is not source applicability.
+
+A property on the income-source entity, and an `INCOME_SOURCE`-owned obligation rule, were both rejected for the reasons recorded under ownership.
+
+Fixing persisted literal spellings for the three semantics here was considered and rejected. Decision 086 fixed `CONFIGURED` because Decision 085 had already used that spelling, and said so; spellings for these semantics have no antecedent in any accepted source and would be newly minted vocabulary. Naming them is properly the work of the decision that defines the arm they discriminate, which will name them by decision rather than leave them to an implementation.
+
+Settling `obligationId` provenance here was considered and rejected: nothing in this decision requires it.
+
+## Tradeoffs
+
+An author who thinks in terms of two lists must choose one semantic. The gain is that no plan can hold a contradictory pair, and every scope has exactly one representation.
+
+Universal applicability and every-source-except behave identically until a source is excluded, so the distinction earns itself only when a user narrows scope. Keeping both is what makes that narrowing an explicit dated edit rather than a silent reinterpretation.
+
+The semantics are fixed while the vocabulary that expresses them is not, so this family's contract arrives across more than one decision, as `TOP_PRIORITIES` already does.
+
+Several validation needs are now known and unenforceable for the same missing authored contract, as in Decisions 082, 085, 086 and 087.
+
+## Consequences
+
+The `GLOBAL_OBLIGATION` income-source applicability blocker recorded by Decision 086 is closed. All other blockers, tensions and gaps recorded by Decision 086 remain open.
+
+Blocker F remains open and continues to gate the work it names, including eligible-income computation, aggregation and double-count prevention. Blocker C remains open.
+
+`GLOBAL_OBLIGATION` does not become resolvable. `ResolvedGlobalObligation.sequence` still lacks an accepted authoring source, so the additive slot still cannot be materialized, as Decision 080 recorded.
+
+§42.1 may no longer be cited as establishing the representation of this field, and the payload decision inherits the obligation to correct it.
+
+The payload decision may treat the three applicability semantics as settled and must preserve them exactly, while choosing the vocabulary and structure that express them.
+
+No specification text changes, no code is authorised, no contract changes, no registry changes, and no `schemaVersion` change. Milestone 2 gains no new implementable contract.
+
+## Future Review Trigger
+
+Reconsider when Blocker F is taken up, since the applicability question then composes with an eligible-income question and their interaction must be stated explicitly; when the `GLOBAL_OBLIGATION` payload decision supplies the arm, since the vocabulary, field names, serialisation and the correction of §42.1 are fixed then; if an accepted source ever authorises an income-source-level property marking a source eligible or excluded, since PRD §15 anticipates one; if a slot kind other than `GLOBAL_OBLIGATION` acquires income-source applicability, since the semantics would then be shared; or if `RULE_SKIP_INCOME_SOURCE_EXCLUDED` is ever split, since both listed semantics currently map to it.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
