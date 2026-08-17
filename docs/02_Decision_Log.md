@@ -6700,6 +6700,290 @@ Reconsider when Blocker F is taken up, since the applicability question then com
 
 ---
 
+# Decision 089: Global Obligations Are Independent, and Overcommitment Is Invalid
+
+**Status:** Accepted
+**Related:** Decisions 015, 016, 068, 071, 073, 074, 078, 079, 080, 081, 082, 086, 087, 088
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+Applicable `GLOBAL_OBLIGATION` rules are independent financial commitments.
+
+Each applicable obligation computes its own claim using its own accepted semantics and its own configured basis. No obligation is financially prior to another.
+
+When the applicable global obligations' computed claims exceed the eligible amount available to satisfy those obligations, the resolution state is financially invalid. PFOS must surface that state for correction. It must not be resolved by sequential priority funding, by partially funding later obligations because earlier obligations consumed the available amount, by proportional reduction across obligations, or by any identifier, timestamp, array-position or repository-order tie-break.
+
+It follows that `ResolvedGlobalObligation.sequence` has no financial execution meaning in V1.
+
+This decision settles financial policy and one semantic classification. It fixes no detection point, no validator, no error code, no algorithm, and no contract or schema change.
+
+## Independence
+
+Decision 071 and PFOS-ENG-02 §14 both state that separately authored global obligations are independent complementary two-way splits, each evaluated against its own configured income basis, never combined into a single N-way split. Decision 074 states that separately authored obligations remain independent and are not collapsed. Decision 080 states that they accumulate, that each takes effect, and that none displaces another.
+
+Independence is symmetric. There is no first obligation and no last one, and no obligation's computation reads another obligation's existence, rate, amount, destination or result.
+
+No obligation acquires priority over another from authoring time, array position, `RuleId`, `RuleVersionId`, any other `EntityId`, a timestamp, a version number, repository order, storage order, iteration order, rate magnitude, or from being tithing.
+
+## The overcommitted resolution state is financially invalid
+
+When the applicable obligations' computed claims exceed the eligible amount available to satisfy them, the resolution state is financially invalid and must be surfaced for correction rather than resolved.
+
+Four sources support why an over-claimed result cannot be accepted. PFOS-ENG-01 §7 lists "Allocations cannot create or destroy money" among system financial invariants that cannot be overridden by user rules, and closes: "If a user rule conflicts with a system invariant, validation fails." §21.1 lists "Rule violates a system invariant" among hard validation errors. PFOS-ENG-02 §2 fixes the balance invariant as total eligible input equalling total proposed allocations plus total remaining unallocated. Constitution Principle 19 requires that money never appear or disappear.
+
+None of those sources specifies this condition for global obligations, and none states its remedy. They establish why an over-claimed result cannot stand. This decision supplies the family-specific financial policy.
+
+## The condition is over computed claims
+
+The invalid condition concerns the computed claims of the obligations that apply to a given resolution, measured against the eligible amount available to satisfy them.
+
+It is not the condition that the authored obligation rates sum to more than 10,000 basis points. Decision 088's applicability semantics can remove an obligation from a resolution entirely, and a `maximumAmount` can cap a claim below what its rate alone implies. Two obligations authored at 6,000 basis points each are therefore not necessarily an invalid plan: they may never both apply to one income source, or one may be capped.
+
+No authored-rate-sum validation rule is introduced. Decision 071 states that a single rate carries no sum requirement, PFOS-ENG-01 §21.1's over-total error is scoped to percentages "in the same pool", and Decision 071 with PFOS-ENG-02 §14 both hold that obligations are not a pool. No accepted source independently requires such a rule, so none is adopted.
+
+A consequence follows and is recorded deliberately. Because applicability is per income source and caps are monetary, whether over-claiming occurs may depend on which source is being resolved and on the amount involved.
+
+## Where and when the condition is detected is not decided
+
+This decision does not settle where or when the invalid condition is detected.
+
+No authoring-time validator, resolver validator or allocation-time validator is authorised. No validator API, no error code, no cap-handling algorithm, no user-facing behaviour and no recovery flow is authorised or implied.
+
+Nothing here may be read as establishing that the condition is detectable at authoring time.
+
+## Why ordered funding is rejected
+
+Ordered funding would require an order that does not exist.
+
+Every candidate source is excluded. Decision 080 states, as holding under every possible future answer, that no ordering may use an identifier, array position, a timestamp, creation order, repository order or storage order, and states the same specifically for this field. Decision 086 applied that prohibition to the fixed-amount pool sequence and Decision 087 to top-priority rank. PFOS-ENG-00 §14 keeps identifiers opaque, §32 Invariant 11 forbids repository order from changing a result, and PFOS-ENG-01 §26 requires all ordering to be explicit and stable.
+
+No authored ordering exists either. PFOS-ENG-01 §12.2's configurable-field list for the tithing rule contains no order, rank, priority or sequence, and §42.1's example carries none.
+
+Ordered funding would also contradict Decision 080's holding that no obligation displaces another, since consuming the eligible amount ahead of another obligation is displacement in effect. And whichever key were chosen, the user never expressed it, which would make an unauthored fact decide which commitment goes unfunded — a silent financial decision under Constitution Principle 4.
+
+PFOS-ENG-02 §30 states a competition rule for a different family: "When several fixed amounts compete for insufficient money, their ordering must come from the resolved rule set." That sentence grounds the sequence fields on required funding and on fixed-amount pool destinations. The corpus states it there and states no counterpart for global obligations.
+
+## Why proportional reduction is rejected
+
+Proportional reduction would silently change an authored commitment. A user who authored ten percent would receive some other percentage with no authored act, against Constitution Principle 4.
+
+It would also collapse independent obligations into a pool. Scaling every obligation by a common factor is the single N-way split that Decision 071, Decision 074 and PFOS-ENG-02 §14 each forbid, and Decision 071 reserves pool treatment for authored pools that must total exactly 10,000 basis points.
+
+And it would conceal a plan defect. Constitution Principle 7 forbids rewarding unhealthy financial behaviour and Principle 6 requires factual, constructive diagnosis. Quietly shrinking every obligation makes an overcommitted plan look funded, when surfacing the shortfall is what Principle 9's explainability and the Funding Advisor exist for.
+
+## Tithing has no intra-stage precedence
+
+No accepted source gives tithing priority over another global obligation, and none makes obligation priority user-configurable.
+
+PFOS-ENG-01 §11 resolves all global percentage-based obligations in one step. §12 specifies the tithing rule in the singular. PFOS-ENG-02 §13 describes global percentage obligations as including rules such as tithing, naming it as an instance of the category rather than its head. PRD §15 and Constitution Principle 2 fix its default rate, not its position.
+
+The corpus's "tithing first" language orders the global-obligation stage against later stages. That stage ordering is carried by `stageSequence` and is unchanged by this decision. It is stage ordering, not intra-stage obligation priority.
+
+Tithing's default rate and its prominence in the product do not make it financially first. Under this decision tithing is one independent commitment among possibly several.
+
+## sequence has no financial execution meaning in V1
+
+`ResolvedGlobalObligation.sequence` has no financial execution meaning in V1.
+
+It does not affect the obligation amount, because each obligation computes its own claim against its own basis, and Decision 074 exposes one `IncomeBasis` member in V1 so that no obligation's base is a running remainder.
+
+It does not affect `IncomeBasis`, which is a per-obligation selector.
+
+It does not affect `maximumAmount`, which bounds its own obligation and creates no relation between obligations. No accepted source redirects a capped excess to another obligation.
+
+It does not affect Decision 088's applicability, which is a per-source predicate contributing no ordering key.
+
+It does not affect residual-cent assignment. Each obligation is its own complementary two-way split, so its residual is internal to it, and Decision 071 records that at most one cent is ever in play for two complementary weights. Decision 074 assigns residual-cent canonical ordering to Allocation Engine bucket state and records that `ResolvedRuleSet` does not carry a second canonical destination-order list.
+
+It does not affect insufficient-funds priority, because there is no such priority: the overcommitted state is invalid rather than ordered.
+
+Every channel through which the field could have carried financial meaning is closed.
+
+## Supersedes Decision 074 only to the following extent
+
+Decision 074's "Deterministic ordering and canonicalization" section is superseded to the minimum extent stated here, and no further.
+
+Under "Rule Engine-owned financial ordering", the list entry:
+
+    - global obligations ordered by financially meaningful `sequence`
+
+is superseded, and the sentence governing that list:
+
+    These orderings affect execution semantics.
+
+is superseded only as it applies to global obligations.
+
+The new authority is that `ResolvedGlobalObligation.sequence` is not a financially meaningful Rule Engine-owned ordering in V1, and that the statement that this ordering affects execution semantics no longer applies to global obligations.
+
+Decision 074's Status remains Accepted. Decision 074 is not superseded as a whole, and nothing in this decision may be read as superseding it beyond the entry and the application named above.
+
+Decision 074's "Global obligations" section states that "`sequence` is financially meaningful where separately authored obligations must be evaluated in a defined order." That sentence is conditional and is not superseded and is not contradicted. This decision establishes that no defined order is required in V1, so its antecedent is false in V1 and it asserts nothing for V1.
+
+Decision 074's Blocker E recorded that a contrary interpretation of rule ordering would require amending Decision 074. This decision performs that correction at the minimum extent, rather than recording it as owed.
+
+A later editorial cross-reference in Decision 074, pointing to this decision at the superseded entry, is recommended. That documentation cleanup is not part of this decision and changes nothing here.
+
+## Decision 074 material preserved
+
+The `sequence` field itself, its declared type, and the structure of `ResolvedGlobalObligation`. No member is added, removed, reordered or made optional.
+
+`stageSequence`, and the stage ordering it carries.
+
+Top-priority rank ordering, and therefore Decision 087.
+
+`ResolvedFundingRule.sequence` and `ResolvedPoolFixedAmount.sequence`, together with the fixed-amount competition semantics that PFOS-ENG-02 §30 grounds. Each keeps its classification as a financially meaningful ordering, and Decision 074's governing sentence continues to apply to them and to `stageSequence` and to top-priority rank.
+
+The Allocation Engine-owned residual-cent ordering, and the reproducibility-only ordering rules.
+
+`ResolvedRuleSet`, `schemaVersion`, `sourceRuleVersionIds`, and every other Decision 074 contract element.
+
+## Decision 080 is clarified, not superseded
+
+Decision 080 is not superseded by this decision, and its Status remains Accepted.
+
+One recital in its "Ordered materialization of the additive slot is blocked" section is no longer current authority: that `ResolvedGlobalObligation.sequence` is financially meaningful because Decision 074 declares it so. That recital was an accurate report of Decision 074 when written, and it is no longer current because the underlying Decision 074 classification is superseded above. This decision does not independently supersede Decision 080.
+
+Decision 080's holdings remain binding:
+
+- `sequence` must not derive from an identifier;
+- `sequence` must not derive from array position;
+- `sequence` must not derive from repository or storage order;
+- Decision 080 classified the slot and did not enable it to be built;
+- `ResolvedRuleSet.globalObligations` remains unmaterializable while the current non-optional `sequence` field has no accepted value.
+
+The blocking conclusion still stands. Decision 080 gave two grounds for it: that `sequence` has no accepted value, and that emitting a collection whose ordering is not financially established would defeat determinism. The first stands unchanged. The second no longer applies in that form, because the ordering is now established to be financially absent rather than unestablished, and the canonicalization gap recorded below supplies a further ground.
+
+## The persisted contract does not change
+
+This decision changes a semantic classification only. It does not change the persisted contract.
+
+`ResolvedGlobalObligation` retains every member including `sequence`, with its declared type unchanged. The field is not removed, not made optional, not retyped, not reclassified in source, and not replaced. `ResolvedRuleSet` is unchanged, `schemaVersion` is unchanged and no increment is authorised, and Plan Snapshot design is unchanged.
+
+Decision 074 records that any incompatible persisted contract change requires a schema-version increment so that existing Plan Snapshots continue to reproduce the rules under which they were created. No such change is made or authorised here.
+
+The eventual contract disposition of `ResolvedGlobalObligation.sequence` remains open. Removal, canonical-only retention, replacement and optionality are all available, and none is selected by this decision.
+
+## Canonical ordering is a separate, unresolved question
+
+Financial ordering for global obligations is settled absent. Canonical, reproducibility ordering is still required and still unresolved. The two must not be conflated.
+
+Decision 074 requires that identical inputs produce a deep-equal `ResolvedRuleSet`, and distinguishes orderings that affect execution semantics from arrays whose index has no financial meaning but which are still emitted canonically. That requirement survives untouched, and `globalObligations` still requires deterministic emission for deep-equal `ResolvedRuleSet` behaviour.
+
+No canonical key is adopted by this decision.
+
+`destinationBucketId` is not necessarily a total key, because two obligations may legitimately target the same destination bucket. `obligationId` provenance remains unresolved under Decision 086 and cannot be assessed. `ruleVersionId` is recorded as a candidate for the later canonicalization decision, because Decision 079 selects at most one effective version per rule, so distinct resolved obligations carry distinct version identifiers. It is a candidate only and it is not adopted.
+
+If a later decision adopts an opaque identifier for deterministic serialization, that use must not cause the identifier to acquire financial meaning. PFOS-ENG-00 §14 keeps identifiers opaque, and a fixed serialization order must never become execution priority. An array emitted in a fixed order must not be executed as though that order meant something.
+
+The canonicalization gap for `globalObligations` remains open, separate from and not a resurrection of financial sequence.
+
+## Blocker F
+
+The obligation amounts do not depend on Blocker F. Each obligation is a rate against a supplied basis, and Decision 074 records that Blocker F does not change the `ResolvedRuleSet` contract because the contract names the selected basis rather than carrying the computed amount.
+
+Blocker F remains responsible for eligible-income computation, aggregation and double-count prevention. This decision owns the overcommitment policy, not the calculation of the eligible amount.
+
+Blocker F remains open and is not resolved, narrowed or implemented.
+
+## Deliberately not decided
+
+Where and when the invalid condition is detected, including whether detection occurs during authoring, during rule resolution, during allocation execution, or elsewhere.
+
+Any validator, validator API, validation layer, authored-rate-sum check or error code, and any skip, warning or explanation code.
+
+How `maximumAmount` and applicability are incorporated into the eventual check.
+
+Eligible-income computation, aggregation and double-count prevention.
+
+User-facing behaviour, wording, and any recovery or edit flow.
+
+Whether `ResolvedGlobalObligation.sequence` is removed, retained as canonical-only, replaced, or made optional; any canonical key for `globalObligations`; and any `schemaVersion` change.
+
+`obligationId` provenance.
+
+## Unchanged by this decision
+
+No specification text is superseded, amended or replaced. PFOS-ENG-01 and PFOS-ENG-02 are not altered.
+
+Decision 074 is superseded only to the minimum extent recorded above and retains its Accepted status. Decision 080 is clarified rather than superseded and retains its Accepted status. No other decision is superseded, amended or clarified.
+
+`ResolvedGlobalObligation`, `ResolvedRuleSet`, `schemaVersion`, `sourceRuleVersionIds` and Plan Snapshot design are unchanged. No source, test, registry, schema or configuration change is authorised.
+
+No `GLOBAL_OBLIGATION` payload and no arm of `RuleConfiguration` is defined or authorised, and no field name, literal spelling, type, enum or union is introduced. `RuleConfiguration`, `RuleVersion`, `ConfiguredRuleVersion` and `RuleVersionKind` remain as Decision 086 left them, and `TerminatingRuleVersion` remains the only concrete rule-version arm in source.
+
+No validator is authorised, no error code is registered or named, and no registry changes.
+
+No explanation, skip or warning ordering is established. Decision 074 keeps those channels separate, Decision 079 orders `skippedRules` by rule identifier as a canonicalization, and no accepted source ties any of them to obligation order.
+
+Decision 088's applicability semantics are untouched and remain orthogonal to ordering. `ALLOCATION_BASIS` authoring, the `TOP_PRIORITIES` payload shape, the `GOAL_POLICY` duplication and the PFOS-ENG-01 §41 metadata questions are untouched. Resolver population, evaluation-context population, Blocker C, and all Milestone 3 behaviour remain outside this decision.
+
+Decisions 016, 071, 078, 079, 081, 082, 086, 087 and 088 are unamended.
+
+## Why
+
+Decision 080 recorded that no accepted source supplies this field's value or its key, and Decision 088 preserved that. Neither examined what the field would do if it had one.
+
+That examination showed the only channel through which order could be financially decisive was competition when the obligations over-claim — a state the corpus permits but never describes. This decision answers that question at the level it belongs to, as financial policy, and then follows the answer to its consequence for the field's classification.
+
+Both of the alternatives it rejects are silent. Ordered funding would let an unauthored fact decide which commitment goes unfunded; proportional reduction would quietly change every authored rate. Constitution Principle 4 forbids both.
+
+The supersession is performed here rather than deferred because Decision 068 requires a conflict between documents to be resolved explicitly rather than silently, and leaving two accepted decisions in direct contradiction while recording that one will be corrected later is the silent outcome in slower form. Keeping the supersession to one list entry and one application of one sentence is what keeps the correction proportionate to the conflict.
+
+## Alternatives Considered
+
+Sequential priority funding was rejected: it requires an order no accepted source supplies and every candidate source is excluded, it contradicts Decision 080's holding that no obligation displaces another, and it makes an unauthored fact financially decisive.
+
+Proportional reduction was rejected: it silently alters authored commitments, collapses independent obligations into the pool treatment three sources forbid, and conceals a plan defect.
+
+An authored-rate-sum rule requiring obligations to total no more than 10,000 basis points was rejected. No accepted source independently requires it, and applicability and caps mean authored rates are not the quantity that over-claims.
+
+Naming the Decision 074 conflict and leaving the correction to a later decision was considered and rejected. It would leave two accepted decisions in direct contradiction, which Decision 068 requires be resolved rather than carried, and an implementation reading Decision 074 alone would find the superseded classification still stated.
+
+Superseding Decision 074 as a whole, or setting its Status to Superseded, was rejected as disproportionate. One classification is corrected; the contract, the other financial orderings, the residual-cent ordering, the reproducibility-only rules and every structural element remain correct and in force.
+
+Superseding Decision 080 was rejected. Only its recital of the Decision 074 classification is affected, and that follows from the Decision 074 correction rather than from any defect in Decision 080's own holdings.
+
+Deciding the field's contract disposition here was rejected. Removal, canonical-only retention, replacement and optionality are contract and schema questions entangled with a canonical-key choice, and Decision 074 requires a schema-version increment for an incompatible persisted change.
+
+Adopting `ruleVersionId` as the canonical emission key was considered and rejected. The candidate is recorded because it is useful to the later decision, but adopting it would settle by implication the contract question this decision reserves.
+
+Deciding where the invalid condition is detected was rejected: because applicability and caps affect the computed claims, the condition may not be determinable at authoring time, and choosing a detection point before that is understood would fix an algorithm this decision deliberately leaves open.
+
+## Tradeoffs
+
+`GLOBAL_OBLIGATION` remains unmaterializable. This decision removes the reason the field mattered without supplying the value the non-optional contract still requires, so the slot stays blocked.
+
+A field in an accepted, persisted contract now carries no financial execution meaning while remaining in that contract with its type unchanged. That is uncomfortable and it is the accurate description until the contract question is taken up.
+
+A user who authors obligations whose applicable claims over-claim will be blocked rather than partially funded. That is stricter than Decision 075's treatment of zero top priorities, which chose a warning over an error. The cases differ: zero top priorities is a coherent plan state in which money flows to later stages, whereas an over-claimed obligation set has no valid outcome, since every candidate resolution is rejected above.
+
+The canonicalization gap is now explicit and unfilled, so `globalObligations` has neither a financial nor an established canonical ordering.
+
+A narrow supersession requires Decision 074 to be read together with this decision at one point, until the recommended editorial cross-reference is made.
+
+## Consequences
+
+`ResolvedGlobalObligation.sequence` has no financial execution meaning in V1, and Decision 074's classification of it as a financially meaningful Rule Engine-owned ordering is superseded to that extent.
+
+Decision 080's recital of that classification is no longer current authority, while its exclusions and its blocking conclusion remain binding. `GLOBAL_OBLIGATION` does not become resolvable.
+
+The canonicalization gap for `globalObligations` is recorded as open, with `ruleVersionId` noted as a candidate and none adopted.
+
+The closures established by Decisions 087 and 088 are unchanged.
+
+This decision closes no additional Decision 086 configuration blocker. It resolves the financial-ordering question associated with `ResolvedGlobalObligation.sequence` while leaving the field's contract disposition and canonicalization unresolved.
+
+Blocker C and Blocker F remain open and continue to gate the work they name.
+
+No specification text changes, no code is authorised, no contract changes, no registry changes, and no `schemaVersion` change. Milestone 2 gains no new implementable contract.
+
+## Future Review Trigger
+
+Reconsider when the field's contract disposition and a canonical key are taken up, since the two are entangled and a schema-version question arrives with them; if a second `IncomeBasis` member is ever defined as a function of a running remainder, since obligations would then cease to be independent and this decision's foundation would change; when the invalid condition's detection point is taken up, since Blocker F's eligible amount and the treatment of caps are inputs to it; if an accepted source ever establishes a competition rule for global obligations equivalent to PFOS-ENG-02 §30's rule for fixed amounts, since that would contradict this decision and require replacing it; or when `obligationId` provenance is settled, since it becomes a second canonical-key candidate then.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
