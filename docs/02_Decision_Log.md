@@ -7198,6 +7198,324 @@ Reconsider when `obligationId` provenance and the projection cardinality are set
 
 ---
 
+# Decision 091: Resolved Global Obligation Provenance Is ruleId and ruleVersionId, and One Selected Version Contributes At Most One Obligation
+
+**Status:** Accepted
+**Related:** Decisions 016, 023, 068, 071, 073, 074, 078, 079, 080, 081, 082, 085, 086, 088, 089, 090
+**Scope:** Financial logic, Architecture, Engineering, Data
+
+## Decision
+
+A `ResolvedGlobalObligation` carries two distinct provenance identities:
+
+- `ruleId`, the identity of the stable authored `Rule`;
+- `ruleVersionId`, the identity of the exact `RuleVersion` selected for the evaluation date.
+
+`obligationId` is retired. Its value was never attributed by any accepted source, and this decision establishes that the concept it was reaching for is the stable authored `Rule` identity, under the name the corpus already uses for that concept.
+
+A selected `GLOBAL_OBLIGATION` `RuleVersion` contributes at most one `ResolvedGlobalObligation`. Where it contributes, it contributes exactly one.
+
+Renaming a required member of a persisted contract is an incompatible `ResolvedRuleSet` contract change under Decision 074, so a schema-version consequence exists. This decision does not select a numeric `schemaVersion`, does not increment one, does not authorise the source change, and does not define migration mechanics.
+
+This decision adopts no canonical ordering key, defines no `GLOBAL_OBLIGATION` payload, authorises no validator or error code, and does not make `GLOBAL_OBLIGATION` materializable.
+
+## The two identities
+
+`ruleId` answers which logical authored `Rule` this obligation is. Decision 081 makes `RuleId` the stable logical identity that persists across every version, and records that changing an owner or slot kind creates a different logical rule rather than retroactively changing what historical versions governed. Decision 078 defines it as a semantic alias of `EntityId` on the terms Decision 074 established for `PlanVersionId`.
+
+`ruleVersionId` answers which exact version of that Rule produced this resolved obligation. Decision 079 selects it by latest `effectiveFrom`, Decision 085 fixes what a selected `CONFIGURED` version contributes, and PFOS-ENG-01 §19.1 requires a version used in a confirmed allocation to remain reconstructable.
+
+Neither derives from the other inside the resolved contract. PFOS-ENG-00 §14 forbids deriving a rule identity from a version identifier's shape, and Decision 086 records that no accepted contract pairs a `Rule` with its versions.
+
+PFOS-ENG-01 §19.2's own example is the demonstration: a tithing rule at 10% from January 1 and 12% from April 1 produces two resolved obligations across two snapshots with the same `ruleId` and different `ruleVersionId`s. That is the fact §19.3 reports as "Tithing changed from 10% to 12% on April 1," and no version-only contract can express it.
+
+This family needs it more than the others. `GLOBAL_OBLIGATION` is the only executable resolved family with no natural key: every other is keyed by `bucketId`, and `destinationBucketId` cannot serve, because Decisions 089 and 090 both record that two obligations may legitimately target the same destination bucket.
+
+Both identifiers remain opaque under PFOS-ENG-00 §14. Domain logic must never parse either identifier or derive financial, business, chronological, precedence, priority, or execution semantics from its value or shape. A later accepted decision may separately use an opaque identifier mechanically as a reproducibility-only canonical serialization key, provided that use acquires no financial meaning and never becomes execution priority.
+
+## Why this is not the redundancy the corpus has refused
+
+Decision 081 refused a stored precedence level, Decision 083 a dated status, Decision 085 an independent terminating flag, and Decision 090 the `sequence` ordinal, each on the objection that two fields can disagree. In every one of those cases the redundant value was derivable from a field that already existed, so storing it bought nothing. Decision 086 accepted a cross-object redundancy deliberately, precisely because the value there was not derivable.
+
+`ruleId` is in Decision 086's position. It is not derivable from `ruleVersionId` by any consumer of a `ResolvedRuleSet`.
+
+The cost is stated plainly: `ruleId` and `ruleVersionId` can disagree, and no contract pairs a `Rule` with its versions to check them. This is not a new class of hazard — `SkippedRule` already carries the identical unenforceable pair — and it joins the invariants Decisions 085 and 086 recorded as awaiting that same missing contract. No validator is authorised and no error code is registered, under Decision 073's convention that a code is named once the behaviour it reports is specified.
+
+Decision 081's provenance gap does not extend here. It concerns `ResolvedRolloverPolicy`, `ResolvedGoalPolicy` and `ResolvedFundingRule`, whose entries may originate in a product default with no version to name. Decision 080's enumeration of established product defaults contains no global obligation, and Decision 088 records the consequence that a tithing obligation exists only when authored. Both fields are therefore safely non-optional for this family. Decision 081's gap is untouched and remains open for the three families it names.
+
+## Why the field is renamed rather than kept
+
+`obligationId` names the wrong thing once its value is a `RuleId`, and it invites the reading this decision rejects — that some obligation entity exists.
+
+A second name for an existing concept is terminology drift, the objection Decision 078 raised against `effectiveThrough` and Decision 081 raised against a parallel precedence vocabulary. `ruleId` is the spelling already used by `SkippedRule`, by `Rule`, by `TerminatingRuleVersion` and by the shipped `RuleId` alias, so the rename keeps one vocabulary rather than two.
+
+Constitution Principle 25 chooses clarity where clarity and an additional feature conflict. A correctly-typed field under a misleading name is the cost that principle exists to avoid, and Decision 090 invoked it for the same reason.
+
+Retaining the name and documenting the semantic was considered and rejected: it leaves a persisted field whose name contradicts its meaning, which is what an implementation or an import validator reads first.
+
+## No separate obligation entity
+
+No accepted authored obligation entity exists. PFOS-ENG-01 §41's conceptual data model lists `Rule`, `RuleVersion`, `PlanSnapshot` and `RuleAuditEntry`, and no `Obligation`.
+
+`GLOBAL_OBLIGATION` is authored as a `Rule`: Decision 081 gives it a slot kind, Decision 082 places it at `GLOBAL` and exempts it from authored-scope uniqueness, and Decision 088 confirms its ownership. Its changing financial semantics belong to the `RuleVersion`, where Decision 086 places a required non-nullable configuration and Decision 088 places applicability.
+
+An obligation entity would create a new identity space, lifecycle and versioning domain — a commitment far larger than a field's provenance, and the kind Decision 068 forbids making as a side effect of another decision.
+
+No `Obligation`, no `ObligationVersion`, no obligation lifecycle, no new `RuleOwner` variant and no new `ResolvedSlotKind` member is introduced. Decision 081 requires no amendment.
+
+## No per-resolution identity
+
+A resolved-entry identity minted per resolution is rejected.
+
+Decision 074 requires identical inputs to produce a deep-equal `ResolvedRuleSet`, and PFOS-ENG-01 §26 excludes random identifiers from resolution. A minted value would differ between two recalculations of one historical date, so a stored snapshot's value would be unreproducible, against §19.1, Constitution Principle 11 and PFOS-ENG-00 §32 Invariant 10. Decision 088's historical-determinism holding requires historical facts to come from the effective version and the identity supplied in that historical evaluation context; a minted value comes from neither. And an identity minted at resolution time traces to nothing authored.
+
+`ResolvedRuleSet.resolvedRuleSetId` presents a related question that no accepted source examines. It is outside this decision's scope, is not resolved here, and is not changed.
+
+## Projection cardinality
+
+This decision establishes the projection cardinality. No earlier decision states it. Decision 086 recorded `obligationId` provenance as unattributed. Decision 089 recorded that it could not be assessed. Decision 090 recorded the cardinality as an open question for the first time, listed three items expressly as evidence for a one-to-one projection and as evidence only, and declined to convert them into authority. This decision performs that conversion, on its own authority, for the first time.
+
+A selected `GLOBAL_OBLIGATION` `RuleVersion` contributes at most one `ResolvedGlobalObligation`, and exactly one where it contributes.
+
+The grounds are these. Decision 079 selects at most one effective version per rule for an evaluation date. Decision 085 holds that a selected `CONFIGURED` version contributes its configuration. Decision 088 records that applicability decides whether an obligation produces a resolved obligation or a skip. Decisions 080, 082 and 089 each explain multiplicity by multiple Rules and never by one version. Decision 074 types `ResolvedGlobalObligation.ruleVersionId` in the singular while typing `ResolvedTopPriorityEntry.ruleVersionIds` and `ResolvedPoolDestination.ruleVersionIds` plural on structures that can conceptually assemble from more than one version. And Decisions 071, 074 and 080 with PFOS-ENG-02 §14 speak throughout of separately authored obligations and separately authored global rules, which is an authoring multiplicity.
+
+The only construction under which one version could name several obligations is the separate obligation entity rejected above, which appears in no accepted source. Decision 090 recorded that entanglement in exactly those terms: if `obligationId` names a separate entity, one version naming several obligations becomes coherent.
+
+Decision 090 declined to settle this because doing so in order to obtain a sort key would close a design space for a canonicalization convenience, which is the wrong reason to close one. That reason is specific to its subject and does not apply to a decision whose subject is the cardinality itself. Decision 090's Future Review Trigger names this settlement as the reconsideration event.
+
+Decision 079 is unaffected and continues to select at most one effective version per rule. That remains a statement about version selection; this decision supplies the separate statement about how many obligations a selected version contributes.
+
+## The cardinality is stated per selected version, not per income source
+
+The holding is:
+
+```text
+one selected GLOBAL_OBLIGATION RuleVersion  ->  at most one ResolvedGlobalObligation
+```
+
+It is not:
+
+```text
+one selected RuleVersion  ->  one ResolvedGlobalObligation per applicable income source
+```
+
+Nothing in this decision establishes a per-income-source projection of a rule version into resolved entries. `ResolvedGlobalObligation` carries no income-source member, and Decision 088 records why none is required: the question is answered during resolution and decides whether an obligation is emitted or skipped, so nothing needs to be preserved on the resolved contract in order to explain the outcome. `ResolvedRuleSet` carries no income-source list. PFOS-ENG-01 §25 supplies `Income source` to the evaluation context, and §11 identifies the income source as one step of resolution.
+
+This decision does not decide eligible-income aggregation, per-source computation, double-count prevention, or Blocker F. Decision 016's cross-source aggregation and PFOS-ENG-01 §12.4's conceptual aggregation remain unspecified, and Decision 088 settled nothing further about the population its applicability question might range over. Decision 089's boundary is preserved: obligation amounts do not depend on Blocker F, and Blocker F remains responsible for eligible-income computation, aggregation and double-count prevention.
+
+One consequence is recorded rather than resolved. If a later accepted decision establishes a resolution ranging over several income sources that emits a separate resolved obligation per source, that would place several resolved obligations against one selected version and would contradict this decision, requiring it to be replaced rather than extended. That possibility is recorded as a review trigger. It is neither anticipated nor pre-authorised, and no accepted source establishes it today.
+
+## Contribution and non-contribution
+
+Two levels must be kept apart, because a rule with no effective version has no selected version at all.
+
+At the Rule level, a `GLOBAL_OBLIGATION` `Rule` contributes no `ResolvedGlobalObligation` for an evaluation date on which no `RuleVersion` of that rule is effective. Decision 078 establishes this, Decision 079 restates it, and Decision 080 adds that such a rule contributes no candidate and overrides nothing. No version is selected in this state, so nothing is said here about a selected version.
+
+At the selected-version level, where Decision 079 selects a version for the evaluation date:
+
+- a selected `TERMINATING` version contributes no `ResolvedGlobalObligation`. Decision 085 fixes that post-selection meaning;
+- a selected `CONFIGURED` version contributes its configuration, per Decision 085, and may fail to contribute under the income-source applicability semantics Decision 088 established.
+
+Decision 085's distinction is preserved and nothing here merges it: a rule with no effective version and a rule whose effective version terminates it both contribute nothing, they are not the same state, and only the second records an authored, dated act.
+
+## What Decision 088 supports on applicability, and no more
+
+Decision 088 establishes exactly three applicability semantics for a `GLOBAL_OBLIGATION` rule version, of which exactly one is active: universal applicability; only explicitly listed sources; and every source except explicitly listed sources. Applicability is conceptually required and non-nullable, and missing data never means universal applicability.
+
+Decision 088 records that the question decides whether an obligation produces a resolved obligation or a skip, and that it is answered during resolution over an income-source identity supplied to the evaluation context under PFOS-ENG-01 §25. Under only explicitly listed sources, a source outside the set maps to `RULE_SKIP_INCOME_SOURCE_EXCLUDED`; under every source except explicitly listed sources, a source inside the set maps to the same code; universal applicability produces no non-applicable result from source scope. The ground is Decision 080's existing holding that an explicit eligibility or exclusion determination removes an additive obligation as a skip rather than as an override.
+
+This decision states no stronger zero-case. Decision 088 expressly settles nothing about any population its applicability question might later range over, leaving Decision 016's cross-source aggregation to a later decision and eligible-income computation to Blocker F. Accepted authority therefore does not establish the exact condition under which applicability yields zero resolved obligations for a whole resolution, and this decision does not supply one.
+
+"At most one" is the correct formulation precisely because these non-contributing outcomes exist. "Exactly one" would contradict Decisions 078, 079, 080, 085 and 088.
+
+No skip emission is authorised. Whether a skip record is emitted depends on resolver population and explanation emission, which Decisions 080, 085 and 086 defer and which remain deferred. Decision 088's applicability semantics are otherwise untouched.
+
+## Multiplicity
+
+Multiplicity in `ResolvedRuleSet.globalObligations` comes from several coexisting `GLOBAL_OBLIGATION` Rules, never from one `RuleVersion` producing several obligations. Decision 082 exempts the kind from the authored-scope uniqueness that binds the seven replacing kinds, Decision 080 makes separately authored obligations accumulate with each taking effect and none displacing another, Decision 089 makes them symmetrically independent, and Decision 088 lets each carry its own applicability semantic with no shared global source filter.
+
+Under this decision, several resolved obligations means several Rules.
+
+`ruleId` and `ruleVersionId` acquire no financial meaning from this decision. Neither may become a financial ordering, an execution order, a funding priority, or a financial tie-break input. Decision 089 settles that applicable global obligations are independent, that none is financially prior to another, and that no obligation acquires priority from authoring time, array position, `RuleId`, `RuleVersionId`, any other `EntityId`, a timestamp, a version number, repository order, storage order, iteration order, rate magnitude, or from being tithing. That holding is unchanged, and this decision adds no identifier-derived financial ordering to any family.
+
+This is a prohibition on financial use and on nothing else. A later decision may separately consider either opaque identifier as a reproducibility-only canonical serialization key for `globalObligations`, as the canonical-ordering section below records. Such canonical use must never become execution priority.
+
+Decision 089 is otherwise preserved in full, including that the overcommitted resolution state is financially invalid and must be surfaced for correction rather than resolved by sequential priority funding, by partial funding, by proportional reduction, or by any identifier, timestamp, array-position or repository-order tie-break.
+
+One consequence is recorded rather than established. Decision 080's two additive explanation producers become well-defined by counting Rules — `RULE_EXPLAIN_RULE_APPLIED` for a single surviving obligation, `RULE_EXPLAIN_RULE_APPLIED_ADDITIVELY` for each where two or more survive. This decision registers no code, redefines none, and authorises no emission.
+
+## Traceability
+
+Constitution Principle 12 requires a user to be able to determine what changed, when, why, which rule or plan version was used, and whether the change was manual, imported, calculated, corrected or simulated. It names no third concept beside rule and plan version, so it does not require a separate obligation identity — an independent ground for the rejection above.
+
+Principle 12 does not prescribe this pair. It states a product-level requirement and specifies no field names and no granularity. This decision supplies the family-specific resolved provenance contract for `GLOBAL_OBLIGATION`, as its own act.
+
+What follows is only the satisfaction claim: a resolved obligation carrying both identities satisfies the traceability model without any further contract, whereas a version-only entry would answer "which rule" only through a `Rule`-to-`RuleVersion` pairing that Decision 086 records does not exist and did not authorise. That dependency is removed for this family and for no other. No pairing contract is created.
+
+## sourceRuleVersionIds is a different field
+
+`ResolvedRuleSet.sourceRuleVersionIds` is root-level, spans every rule family, and is de-duplicated and sorted as reproducibility-only provenance for the whole resolved set. Decision 090 already records that it is a different field from `ResolvedGlobalObligation.ruleVersionId` and keeps its own de-duplicated and sorted ordering.
+
+It cannot key an entry, cannot count obligations, cannot say which version produced a given obligation, and holds no rule identities at all. It does not replace per-entry `ruleId` or `ruleVersionId`, and neither replaces it.
+
+`sourceRuleVersionIds` is unchanged, keeps its membership, de-duplication and sort, and keeps its place in Decision 074's reproducibility-only ordering list. Its treatment for a stop remains deferred where Decision 086 left it.
+
+## Contract shape
+
+`ResolvedGlobalObligation` will carry six members once this decision and Decision 090 are both implemented: `ruleId`, `ruleVersionId`, `destinationBucketId`, `rateBasisPoints`, `incomeBasis` and optional `maximumAmount`. Decision 090's recorded count is unchanged; one name changes.
+
+The rename of `obligationId` to `ruleId` is the sole incompatible change this decision introduces. Declaring the two identity fields as `RuleId` and `RuleVersionId` is not incompatible: both are semantic aliases of `EntityId` under Decision 078, on the terms Decision 074 fixed for `PlanVersionId`, so that change is to documentation and construction discipline rather than to what the contract serialises.
+
+Decision 074 is superseded in one further respect: `ResolvedGlobalObligation` carries `ruleId` in place of `obligationId`. Decision 090 already superseded it for the removal of `sequence`, and Decision 089 for the classification of the global-obligation ordering. Decision 074's Status remains Accepted, it is not superseded as a whole, and its schema-version rule is neither amended, narrowed nor excepted. Everything Decision 090 listed as preserved remains preserved: `stageSequence`; top-priority rank ordering; `ResolvedFundingRule.sequence`; `ResolvedPoolFixedAmount.sequence` and the fixed-amount competition semantics; the Allocation Engine-owned residual-cent ordering; the existing reproducibility-only ordering entries; every other member and field of `ResolvedRuleSet`; `sourceRuleVersionIds`; and the schema-version rule. A later editorial cross-reference in Decision 074 is recommended and is not part of this decision.
+
+Decision 086's `obligationId` blocker is discharged, in the way Decision 088 discharged its income-source applicability blocker. All other Decision 086 blockers, tensions and gaps remain open.
+
+## Schema-version consequence
+
+Two incompatible `ResolvedRuleSet` contract changes now stand outstanding against `ResolvedGlobalObligation`: Decision 090's removal of `sequence`, and this decision's rename of `obligationId` to `ruleId`.
+
+They should be handled together by one later schema-version transition, covering the combined six-member shape above rather than creating separate transitions for each.
+
+Decision 090 deferred the numeric decision until the contract was stable enough to version, and named the unresolved `obligationId` as the reason it was not. Resolving it did change the contract, as Decision 090 anticipated.
+
+The narrow conclusion this supports: the `ResolvedGlobalObligation` identity and ordering-field shape on which Decision 090 deferred the schema-version question is now settled sufficiently to take up the schema-version decision. Both outstanding changes against that shape are known, and no further question about that shape remains open.
+
+This is not a claim that the resolved `GLOBAL_OBLIGATION` contract is permanently stable in every respect. The `GLOBAL_OBLIGATION` `RuleConfiguration` payload arm remains undefined and unauthorised since Decision 086, and the decision that supplies it may reveal a further contract question if accepted authority requires one. No such change is expected, none is pre-authorised, and nothing here may be read as licensing one.
+
+No numeric `schemaVersion` is selected, incremented or changed, either in the Decision Log or in source. No migration mechanics are defined. Decision 090's second ground also still holds independently: no accepted source establishes the current decision-level numeric value, so there is no decided baseline to move from, and fixing one is a commitment about a persisted value rather than about the contract's shape.
+
+That the repository has no persistence layer, no stored Plan Snapshot and no migration machinery bears only on how simple the eventual transition will be. It is not a reason the rule does not apply. No pre-persistence exception is created, on Decision 090's ground that creating an exception to an accepted rule inside a decision about something else is the silent resolution Decision 068 forbids.
+
+## Canonical ordering
+
+`ResolvedRuleSet.globalObligations` still requires reproducibility-only canonical ordering for deterministic deep equality. Decision 074 requires that identical inputs produce a deep-equal `ResolvedRuleSet`, and PFOS-ENG-01 §26 requires all ordering to be explicit and stable.
+
+No canonical key is adopted by this decision. Decision 090 assigned that to a later decision, and held that entry into Decision 074's reproducibility-only ordering list belongs with the decision that supplies the key.
+
+Decision 090 rejected `ruleVersionId` for one stated reason: its totality depended on the projection cardinality, which was unresolved. That condition is satisfied here. `ruleVersionId` is now total, since distinct Rules select distinct versions under Decision 079 and one selected version yields at most one obligation under this decision. `ruleId` is likewise total for surviving obligations, since one Rule contributes at most one resolved obligation in one resolution — the second candidate Decision 089's Future Review Trigger anticipated.
+
+Both are therefore available to the later canonicalization decision as reproducibility-only serialization keys. This decision chooses between them and adopts neither. The later decision should note that they order differently across snapshots: `ruleId` gives an order stable across versions of the same rules, `ruleVersionId` does not.
+
+`destinationBucketId` remains not total, because nothing forbids two global obligations targeting the same destination bucket. `ruleId` is now present on `ResolvedGlobalObligation` as a provenance field decided on its own merits, and it must not be read as having been added in order to serve as a sort key.
+
+Decision 090's three forward constraints stand unchanged and bind whichever key is eventually chosen: the array index will carry no financial meaning; the canonical ordering must never become execution priority, since Decision 089 settled that applicable global obligations are independent with none financially prior to another; and repository, storage and iteration order cannot decide emission semantics, as PFOS-ENG-00 §32 Invariant 11 and PFOS-ENG-01 §26 require. Decision 089's further caution also stands: an identifier adopted for deterministic serialization must not thereby acquire financial meaning.
+
+The canonicalization gap Decision 089 recorded and Decision 090 left open remains open.
+
+## GLOBAL_OBLIGATION does not become materializable
+
+This decision closes the previously recorded field-level provenance and value-source blockers for `sequence` and for `obligationId`. Decision 080 recorded that `sequence` had no accepted value source; Decision 090 disposed of the member. Decision 086 recorded `obligationId`'s provenance as unattributed; this decision attributes it.
+
+That is the extent of the closure. It is not a claim that no defect remains on the shape. The consistency of `ruleId` with `ruleVersionId` is unenforceable until an accepted contract pairing a `Rule` with its versions exists. That missing pairing contract is not a Decision 086 configuration blocker and is not recorded as one: Decision 086's configuration blockers concern what a `RuleConfiguration` arm cannot yet represent, whereas this is an unenforceable invariant, and it joins the two that Decisions 085 and 086 already recorded as awaiting the same missing contract.
+
+Remaining blockers include at least the `GLOBAL_OBLIGATION` `RuleConfiguration` payload arm, the canonical ordering of `globalObligations`, resolver population, evaluation-context population, the questions Blocker C still touches, Blocker F for eligible-income computation, and the deferred schema-version transition that gates every incompatible source change.
+
+The slot is not enabled, and nothing here may be read as enabling it.
+
+## No implementation is authorised
+
+No source change is authorised: not the `obligationId` to `ruleId` rename, not Decision 090's `sequence` removal, not the adoption of the `RuleId` and `RuleVersionId` aliases on this shape, and not any change to the tests that reference them. That work follows the schema-version and migration decision.
+
+No `schemaVersion` edit, no migration and no persistence work is authorised. No arm of `RuleConfiguration` is defined or authorised. No canonical key is adopted. No validator is authorised, no validator API is defined, no error code is registered or named, and no registry changes. No skip, warning or explanation emission is authorised. No Milestone 3 behaviour is established.
+
+## Deliberately not decided
+
+The canonical ordering key for `globalObligations`, and the choice between `ruleId` and `ruleVersionId`.
+
+The numeric `schemaVersion` transition, its value, migration mechanics, and the implementation boundary.
+
+The `GLOBAL_OBLIGATION` payload and any arm of `RuleConfiguration`.
+
+A contract pairing a `Rule` with its versions, and the three invariants now awaiting it.
+
+Eligible-income computation, aggregation and double-count prevention; Decision 016's cross-source aggregation; and the population any applicability question may later range over.
+
+`ResolvedRuleSet.resolvedRuleSetId` and its relationship to deterministic deep equality.
+
+Decision 081's provenance gap for `ResolvedRolloverPolicy`, `ResolvedGoalPolicy` and `ResolvedFundingRule`.
+
+Where and when Decision 089's overcommitment condition is detected, and any validator or error code.
+
+Resolver population, evaluation-context population, Blocker C and Blocker F.
+
+The canonical ordering of any other collection, and the sequence fields of required funding and of fixed-amount pool destinations.
+
+## Unchanged by this decision
+
+No engineering specification text is superseded, amended or replaced. PFOS-ENG-01 and PFOS-ENG-02 are not altered.
+
+Decision 074 is superseded only for the contract shape recorded above and retains its Accepted status, including its schema-version rule. Decisions 016, 071, 078, 079, 080, 081, 082, 085, 086, 087, 088, 089 and 090 are unamended. Decision 090's holdings are preserved in full, including the removal of `sequence` and its three forward constraints. Decision 089 is preserved in full. Decision 088's applicability semantics are untouched. Decision 085's two-states distinction is preserved.
+
+`ResolvedRuleSet`'s field list is otherwise unchanged, `sourceRuleVersionIds` is unchanged, Plan Snapshot design is unchanged, and no numeric `schemaVersion` is changed.
+
+`RuleConfiguration`, `RuleVersion`, `ConfiguredRuleVersion` and `RuleVersionKind` remain as Decision 086 left them, and `TerminatingRuleVersion` remains the only concrete rule-version arm in source. `RuleOwner` and `ResolvedSlotKind` are unchanged.
+
+## Why
+
+Decision 090 left two questions open and recorded them as entangled: what `obligationId` identifies, and how many obligations one selected version contributes.
+
+The second resolves from accepted authority. Six independent sources point to one obligation per selected version, none points the other way, and the only construction that would make several coherent is an entity the corpus does not contain.
+
+The first did not resolve from accepted authority, and this decision does not pretend otherwise. Decision 086 recorded that no source attributes the field, and Decisions 088, 089 and 090 each preserved that record. What the corpus does settle is what the alternatives cost: a version-only contract cannot say that two snapshots' obligations are the same commitment, an obligation entity invents a domain, and a minted identity breaks determinism. The remaining choice is a product commitment, and it is made here rather than left to whichever implementation defines the field first.
+
+Renaming rather than documenting keeps one vocabulary. The corpus already spells this concept `ruleId` in four places, and a fifth spelling would be the drift Decisions 078 and 081 each refused.
+
+Taking both questions in one decision is what settles the identity and ordering-field shape on which Decision 090 deferred the schema-version transition, so that transition can now be taken up over a known shape rather than an intermediate one.
+
+## Alternatives Considered
+
+Removing `obligationId` as redundant was considered and rejected. It is not derivable from `ruleVersionId` by any consumer of a `ResolvedRuleSet`, since Decision 086 records that no contract pairs a `Rule` with its versions, and this family has no natural key to fall back on.
+
+Defining `obligationId` as the selected `RuleVersionId` was rejected: it would duplicate the sibling field exactly, which is the two-fields-that-can-disagree objection Decisions 081, 083, 085 and 090 each sustained.
+
+A separate obligation entity was rejected for the reasons recorded above.
+
+A per-resolution minted identity was rejected for the reasons recorded above.
+
+Retaining the name `obligationId` while fixing its semantic was rejected: it preserves a persisted field whose name contradicts its meaning.
+
+Settling the cardinality while deferring the provenance was considered and rejected. It would leave the identity shape unsettled, defer the schema-version transition a further cycle, and leave a field Decision 086 recorded as unattributed sitting in a persisted contract for no gain.
+
+Stating a per-income-source projection, under which one selected version yields one resolved obligation per applicable source, was considered and rejected. No accepted source establishes it, `ResolvedGlobalObligation` carries no income-source member and Decision 088 records that none is required, and adopting it would decide aggregation questions that belong to Decision 016's cross-source specification and to Blocker F.
+
+Prohibiting `ruleId` and `ruleVersionId` from any ordering use whatever was considered and rejected as too broad. The prohibition accepted authority supports is against financial ordering, execution order, funding priority and financial tie-breaks. Decision 074 already orders six reproducibility-only collections by an identifier, so foreclosing mechanical canonical use here would pre-empt the canonicalization decision in the opposite direction.
+
+Adopting a canonical key here was rejected. Two total candidates now exist, and choosing between them is the later decision's work.
+
+Versioning Decision 090's change separately was rejected: it would record an intermediate shape no stored data ever held.
+
+## Tradeoffs
+
+`ResolvedGlobalObligation` carries two identity fields that can disagree, with no contract able to check them. That cost is accepted deliberately, on Decision 086's reasoning, and it joins two existing invariants awaiting the same missing contract.
+
+Two incompatible contract changes now sit undone, so the source contract will differ from the decided contract until the schema-version transition. Nothing can be built on either field in the meantime, and both are recorded rather than left to be discovered.
+
+The projection cardinality is settled on converging evidence rather than on a single dispositive source. The evidence is unanimous and no accepted source contradicts it, but this decision performs the conversion and says so.
+
+The exact condition under which applicability yields zero resolved obligations for a resolution is left where accepted authority leaves it, so the zero case is stated at the level Decision 088 supports and no further.
+
+`GLOBAL_OBLIGATION` remains unmaterializable. This decision closes two recorded field-level blockers without enabling the slot.
+
+## Consequences
+
+`ResolvedGlobalObligation`'s decided shape is `ruleId`, `ruleVersionId`, `destinationBucketId`, `rateBasisPoints`, `incomeBasis` and optional `maximumAmount`.
+
+Decision 086's `obligationId` blocker is discharged. The projection cardinality is settled, per selected version and not per income source.
+
+A second incompatible contract change joins Decision 090's, and both should be covered by one later schema-version transition over the combined decided shape.
+
+`ruleVersionId` and `ruleId` are both total reproducibility-only canonical-key candidates, and no key is adopted.
+
+`GLOBAL_OBLIGATION` remains unmaterializable, and the blockers listed above continue to gate it. Blocker C and Blocker F remain open.
+
+No source, test, registry, schema or configuration change is authorised. Milestone 2 gains no new implementable contract.
+
+## Future Review Trigger
+
+Reconsider when the canonical ordering key is adopted, since `globalObligations` would then join Decision 074's reproducibility-only list and one of the two total candidates is chosen; when the numeric schema-version decision is taken, since both outstanding source changes are gated on it; when a contract pairing a `Rule` with its versions exists, since the `ruleId`-to-`ruleVersionId` consistency invariant becomes enforceable alongside those of Decisions 085 and 086; when the `GLOBAL_OBLIGATION` payload decision supplies the arm, since it may reveal a further contract question; when Blocker F or Decision 016's cross-source aggregation is taken up, since the applicability question then composes with an eligible-income question and the population it ranges over is settled there; if a later accepted decision establishes a resolution emitting a separate resolved obligation per income source, since that would contradict this decision's cardinality and require replacing it; if a persistence layer or a stored Plan Snapshot is introduced before the transition, since the migration would then have data to act on; or if a future accepted source establishes an authored obligation entity, since the projection cardinality rests on its absence.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
