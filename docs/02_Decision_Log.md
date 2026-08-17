@@ -6229,6 +6229,193 @@ Reconsider when any recorded configuration blocker is resolved, since each one u
 
 ---
 
+# Decision 087: Authored Rank Semantics for TOP_PRIORITIES
+
+**Status:** Accepted
+**Related:** Decisions 013, 068, 071, 074, 075, 076, 080, 081, 082, 085, 086
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+A member of the `TOP_PRIORITIES` configuration carries an authored rank under both `SEQUENTIAL` and `PERCENTAGE_SPLIT`.
+
+Rank is required, is authored once per member, and is authored inside the single `GLOBAL` `TOP_PRIORITIES` `RuleVersion` configuration established by Decision 082.
+
+The position of a member within an authored collection carries no financial meaning under either strategy.
+
+This is a semantic decision. It defines no arm of `RuleConfiguration`, supplies no object shape, supersedes no specification text, and authorises no implementation.
+
+## What this decision is, and what it is not
+
+Decision 086 recorded the authored treatment of rank under `TOP_PRIORITIES` as a tension between accepted sources, resolved none of it, and assigned the question to the payload decision together with any specification supersession that resolution would require.
+
+This decision takes only the semantic half of that assignment. Whether rank is authored, under which strategies, at what granularity, and whether array position means anything are questions answerable from accepted authority alone, without any knowledge of the payload.
+
+The shape half stays where Decision 086 placed it. The `TOP_PRIORITIES` arm, its field names, its collection shape, and the correction of PFOS-ENG-01 §42.2 and §42.3 remain the payload decision's work, and this decision performs none of it.
+
+This follows Decision 086's own method. Decision 085 assigned the configured arm, the union name and any closed kind vocabulary to a single payload decision; Decision 086 split that work and discharged only the envelope and discrimination half. The cut here is finer, because it separates a semantic from the shape that will express it, but the discipline is the same: settle what does not depend on the arm, so that it is not settled implicitly by whichever implementation lands first.
+
+## Rank is authored under SEQUENTIAL
+
+Decision 074 makes `rank` a required field of `ResolvedTopPriorityEntry` and places "top-priority entries ordered by ascending rank" among the Rule Engine-owned financial orderings that affect execution semantics. A required field with financial effect must have a source.
+
+Every non-authored source is excluded by accepted authority. Array position is excluded by Decision 076 and by the constraint Decision 080 states as holding under every possible future answer. Identifiers are opaque under PFOS-ENG-00 §14. Repository order cannot alter a result under §32 Invariant 11 and PFOS-ENG-01 §26. Authoring order and version number are excluded by Decisions 079 and 080.
+
+Decision 082 supplies the positive statement: member bucket identifiers, ranks and shares are versioned configuration, and priority ranks and order are versioned configuration. Decision 013 and PRD §16 describe ranked funding as the user's own selection, and Constitution Principle 5 places the financial decision with the user.
+
+## Rank is authored under PERCENTAGE_SPLIT
+
+`ResolvedTopPriorityShare` extends `ResolvedTopPriorityEntry` and does not make `rank` optional, so the resolved contract requires a rank under this strategy too. Decision 082 relies on exactly that inheritance to argue that strategy and membership are one logical rule; the authored side must be able to supply what the resolved side requires.
+
+Decision 076 holds that both top-priority validation rules "apply under either strategy, because PFOS-ENG-01 §13.1 limits top priorities as such rather than limiting a particular strategy," and that a plan in which two entries share a `rank` reports `RULE_TOP_PRIORITY_DUPLICATE_RANK`. A rank that is absent or engine-assigned cannot collide in a way an authored plan produces, so the restrictive reading would leave that holding dead under one of the two strategies it expressly covers.
+
+Decision 076 further records in its tradeoffs that an authored-time pass will be needed once the authored rule contracts are fixed. This decision fixes the semantic that pass will check. It does not authorise the pass.
+
+## Rank is financially load-bearing under PERCENTAGE_SPLIT
+
+Decision 071 distributes residual cents largest fractional remainder first and breaks ties by lowest index in caller-supplied order, recording that Money does not sort and that the caller supplies canonical order.
+
+Decision 074 places top-priority entry order among the Rule Engine-owned financial orderings and expressly does not place it among the reproducibility-only orderings, where set-like pool destinations are ordered by bucket identifier instead.
+
+Two percentage-split members with equal fractional remainders are therefore separated by ascending rank. That is one cent, assigned deterministically, under Constitution Principle 19 and Principle 18. Rank under `PERCENTAGE_SPLIT` is not display metadata.
+
+No implementation mechanics beyond these accepted semantics are established here.
+
+## Decision 082's wording
+
+Decision 082 states three times, without a strategy qualifier, that member ranks are versioned configuration: in its `TOP_PRIORITIES` section, in its §5.3 clarification, and in "Stable addressing versus versioned configuration."
+
+Its summary phrase "the member buckets with their ranks or shares" is elliptical. The same decision's §5.3 clarification qualifies share by strategy and leaves rank unqualified within a single sentence: "a bucket does have a priority rank, and it does have a share under a percentage split."
+
+Decision 086 already characterised the first statement as normative and the second as summary. That characterisation is adopted here.
+
+The reading is therefore:
+
+- under `SEQUENTIAL`, a member carries a rank;
+- under `PERCENTAGE_SPLIT`, a member carries a rank and a share.
+
+The disjunction scopes the strategy-specific element only.
+
+Decision 082 is clarified, not amended. Its granularity holding is untouched.
+
+## Array position is not an authoring gesture
+
+The position of a member in an authored collection is not its financial rank, and it carries no authored financial meaning under either strategy.
+
+Rank must not be derived from any of:
+
+- array position
+- identifier
+- repository order
+- storage order
+- creation order
+- version number
+
+Decision 076 states that ranks are not required to be positive, contiguous, to start at one, or to match array position. If position were the authored ordering, rank would necessarily match position.
+
+Decision 086 answers the identical question for the sibling family, recording that the `FIXED_AMOUNTS` destination `sequence` must not be derived from array order, from identifiers, or from repository order.
+
+PFOS-ENG-01 §13.1 and §21.1 make duplicate priority positions a hard validation error, preserved by Decision 075 and named by Decision 076. Under a positional model duplication is structurally impossible and both bullets are dead.
+
+PFOS-ENG-00 §29.1 treats imported content as untrusted. A rank is a value that can be validated; a position cannot be validated against itself, and silence would again read as a financial instruction, which Decisions 085 and 086 both refused.
+
+## Authoring granularity is unchanged
+
+Decision 082's holding stands in full: one `GLOBAL` `TOP_PRIORITIES` Rule, whose `RuleVersion` configuration carries the strategy, the entire member set, the authored order and ranks, and the shares where applicable.
+
+Rank is a per-member value inside that whole-set configuration. It is not a bucket-owned rule, no bucket-owned top-priority rule is introduced, and §5.3's per-bucket authoring reading remains rejected.
+
+This decision strengthens Decision 082's argument rather than qualifying it. Duplicate rank and count above maximum are properties of a collection, statable only where the whole set is authored together.
+
+## PFOS-ENG-01 §42.2 and §42.3 are not member-shape authority
+
+Both examples omit the authored rank this decision requires. They are therefore insufficient as complete `TOP_PRIORITIES` member-shape authority, and neither may be relied upon as a full statement of what an authored member carries.
+
+Two readings are excluded:
+
+- §42.2's bare `bucketIds` array must not be interpreted as making array position the financial rank.
+- §42.3 must not be interpreted as establishing a rank-free `PERCENTAGE_SPLIT` member.
+
+Correcting or replacing both examples belongs to the `TOP_PRIORITIES` payload decision, at the point it defines the arm.
+
+This decision performs no formal specification-shape supersession and supplies no replacement object shape. Decision 086 assigned the payload shape and any explicit specification replacement to the same decision, and separating them would leave the specification showing a void example with nothing in its place. Nothing here is superseded, PFOS-ENG-01 is not altered, and §42 stands as written while ceasing to be authority on this point.
+
+Decision 082 cited both examples as evidence of whole-set plan-level granularity while recording that the deciding evidence was §13.3 rather than their convenience. That citation is unaffected: it concerned granularity, not member field lists.
+
+PFOS-ENG-01 §13.1's remaining three bullets, §13.2, §13.3, §21.1 and §5.3 are unchanged. §5.3 continues to await the editorial update Decision 082 recommended.
+
+## Unchanged by this decision
+
+No specification text is superseded, amended or replaced.
+
+No constraint on rank beyond Decision 076's uniqueness is introduced. Ranks are still not required to be positive, contiguous, to start at one, or to match array position, and no relationship between rank order and share magnitude is established. Uniqueness remains the only accepted rank constraint currently settled.
+
+No arm of `RuleConfiguration` is defined or authorised, for `TOP_PRIORITIES` or for any other slot kind. No member field name and no collection field name is fixed, and no corrected §42 object example is supplied. The canonical serialised order of an authored member collection is not settled: rank is the financial ordering key, and whether and how an authored collection is canonicalised for deep equality belongs to the payload decision.
+
+`RuleConfiguration`, `RuleVersion`, `ConfiguredRuleVersion` and `RuleVersionKind` remain as Decision 086 left them. Decision 086's envelope is not closed and gains no member. `TerminatingRuleVersion` remains the only concrete rule-version arm in source.
+
+No validator is authorised, no authored validator API is defined, and no error code is registered or named, including for authored-time duplicate-rank or count validation. Decision 073's convention holds: a code is named once the behaviour it reports is specified. No registry changes.
+
+No other configuration family is addressed. The PFOS-ENG-01 §41 metadata questions — `createdAt`, `versionNumber`, `supersedesVersionId` and `changeReason` — are untouched.
+
+`ResolvedRuleSet`, `schemaVersion`, `sourceRuleVersionIds` and Plan Snapshot design are unchanged, and no `schemaVersion` increment is authorised.
+
+Resolver population, evaluation-context population and all Milestone 3 behaviour remain outside this decision.
+
+Decisions 013, 071, 074, 075, 076, 080, 081, 082, 085 and 086 are unamended.
+
+## Why
+
+Decision 086 recorded this as a tension between accepted sources and deferred it. The tension resolves entirely within accepted authority, without the payload, so settling it now prevents the question from being settled implicitly by whichever implementation defines the arm first.
+
+The restrictive reading of Decision 082's summary cannot be held without cost. It would leave `ResolvedTopPriorityShare.rank` required and sourceless, and it would make Decision 076's "either strategy" holding inoperative under `PERCENTAGE_SPLIT`. The elliptical reading contradicts nothing.
+
+The positional reading cannot be held either. Decision 076 forbids identifying rank with array position, Decision 080 forbids position as a financial ordering source under every possible future answer, and Decision 086 has already applied that prohibition to the equivalent field in the sibling family.
+
+## Alternatives Considered
+
+Reading "ranks or shares" as strategy-exclusive was rejected for the reasons above.
+
+Making rank optional under `PERCENTAGE_SPLIT`, with the Rule Engine assigning a value when it is absent, was rejected. No accepted source authorises such an assignment, any assignment rule would need a source this corpus does not supply, an assignment from descending share is non-total on ties, and a synthesised ordering that decides a cent is a silent financial decision under Constitution Principle 4.
+
+Treating rank under `PERCENTAGE_SPLIT` as authored but financially inert was rejected. Decision 074 places ascending-rank entry order among the orderings that affect execution semantics, and Decision 071's tie-break is positional over that order.
+
+Adopting array position as the authored ordering under `SEQUENTIAL` only was rejected. It would make the two strategies disagree about what a member is, for no stated reason, and Decision 074 states one ordering rule for both.
+
+Formally superseding PFOS-ENG-01 §42.2 and §42.3 in shape was considered and rejected. Decision 086 assigned the payload shape and any explicit specification supersession to the same decision, and a supersession without a replacement would leave an examples section showing a void where a reader needs a shape. Decision 075's precedent is not parallel: removing a validation bullet leaves the specification coherent, while voiding an example does not. Recording what the examples may not be read to establish achieves what this decision needs and leaves the payload boundary intact.
+
+Supplying a corrected §42.2 or §42.3 example was rejected on the same ground: a corrected example is a configuration arm in all but name.
+
+Deferring the semantic question itself to the payload decision, as Decision 086 originally routed it, was reconsidered and rejected. Nothing in the question depends on the payload, and Decision 086 established the precedent of settling what does not depend on any arm ahead of the arms.
+
+## Tradeoffs
+
+PFOS-ENG-01 §42.2 and §42.3 remain in the specification while ceasing to be authority on member shape, so a reader who consults them without this decision will still see an incomplete member. That is accepted in exchange for keeping the shape and its correction in one decision.
+
+A `PERCENTAGE_SPLIT` author supplies two values per member rather than one, and the second decides a cent only on an exact tie. The cost is a value; the alternative is an unexplainable cent under Constitution Principle 9.
+
+The authored-time duplicate-rank check is now semantically grounded but still unauthorised, so the invariant is known ahead of its validator, as in Decisions 082, 083 and 085.
+
+The `TOP_PRIORITIES` question now arrives across two decisions rather than one, and this decision ships no code at all.
+
+## Consequences
+
+The `TOP_PRIORITIES` authored-rank blocker recorded by Decision 086 is closed. All other blockers, tensions and gaps recorded by Decision 086 remain open.
+
+Decision 082's "ranks or shares" phrasing has a fixed reading and can no longer be cited for a strategy-limited rank.
+
+PFOS-ENG-01 §42.2 and §42.3 may no longer be cited as establishing a rank-free member or an array-position rank, and the payload decision inherits the obligation to correct them.
+
+The payload decision may treat authored rank as settled for `TOP_PRIORITIES` under both strategies, and need only choose the arm's structure and field names.
+
+No specification text changes, no code is authorised, no contract changes, no registry changes, and no `schemaVersion` change. Milestone 2 gains no new implementable contract.
+
+## Future Review Trigger
+
+Reconsider if a future accepted source constrains rank beyond uniqueness, gives rank and share magnitude a required relationship, or introduces a top-priority strategy beyond the two Decision 074 fixes; when the `TOP_PRIORITIES` payload decision supplies the arm, since the field names, the collection's canonicalisation and the correction of §42.2 and §42.3 are fixed then; or if `ResolvedTopPriorityShare` ever stops extending `ResolvedTopPriorityEntry`, since the inheritance argument would then need restating.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
