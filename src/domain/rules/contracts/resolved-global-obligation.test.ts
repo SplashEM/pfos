@@ -15,24 +15,26 @@ function rate(value: number): BasisPoints {
   return result.value;
 }
 
+/*
+ * Decision 078 makes RuleId and RuleVersionId semantic aliases of EntityId
+ * rather than second brands, so both are constructed through asEntityId.
+ */
 const OBLIGATION: ResolvedGlobalObligation = {
-  obligationId: asEntityId('obligation-1'),
+  ruleId: asEntityId('rule-1'),
   ruleVersionId: asEntityId('rule-version-1'),
   destinationBucketId: asEntityId('bucket-1'),
   rateBasisPoints: rate(1000),
   incomeBasis: 'NET_DEPOSITED',
-  sequence: 1,
 };
 
 describe('ResolvedGlobalObligation', () => {
   it('carries every required field', () => {
     expect(OBLIGATION).toEqual({
-      obligationId: 'obligation-1',
+      ruleId: 'rule-1',
       ruleVersionId: 'rule-version-1',
       destinationBucketId: 'bucket-1',
       rateBasisPoints: 1000,
       incomeBasis: 'NET_DEPOSITED',
-      sequence: 1,
     });
   });
 
@@ -40,10 +42,9 @@ describe('ResolvedGlobalObligation', () => {
     expect(Object.keys(OBLIGATION).sort()).toEqual([
       'destinationBucketId',
       'incomeBasis',
-      'obligationId',
       'rateBasisPoints',
+      'ruleId',
       'ruleVersionId',
-      'sequence',
     ]);
   });
 
@@ -53,21 +54,44 @@ describe('ResolvedGlobalObligation', () => {
   });
 
   /*
-   * Decision 074: separately authored obligations remain independent and are
-   * not collapsed into one N-way percentage split. This asserts only that the
-   * contract can represent them separately; it executes nothing.
+   * Decision 090 removed `sequence` and Decision 091 retired `obligationId`, so
+   * the resolved obligation carries six members. This asserts the decided shape;
+   * the compile-time block below asserts the retired members cannot return.
+   */
+  it('carries exactly the six decided members when a maximum is supplied', () => {
+    const capped: ResolvedGlobalObligation = { ...OBLIGATION, maximumAmount: money(50_000) };
+    expect(Object.keys(capped).sort()).toEqual([
+      'destinationBucketId',
+      'incomeBasis',
+      'maximumAmount',
+      'rateBasisPoints',
+      'ruleId',
+      'ruleVersionId',
+    ]);
+  });
+
+  /*
+   * Decision 091: one selected rule version contributes at most one resolved
+   * obligation, so two obligations carry distinct ruleIds and distinct
+   * ruleVersionIds. Decision 074 keeps separately authored obligations
+   * independent rather than collapsing them into one N-way percentage split.
+   * This asserts only that the contract can represent them separately; it
+   * executes nothing.
    */
   it('represents separately authored obligations as independent values', () => {
     const second: ResolvedGlobalObligation = {
       ...OBLIGATION,
-      obligationId: asEntityId('obligation-2'),
+      ruleId: asEntityId('rule-2'),
       ruleVersionId: asEntityId('rule-version-2'),
       rateBasisPoints: rate(500),
-      sequence: 2,
     };
 
     expect([OBLIGATION, second].map((obligation) => obligation.rateBasisPoints)).toEqual([
       1000, 500,
+    ]);
+    expect([OBLIGATION, second].map((obligation) => obligation.ruleId)).toEqual([
+      'rule-1',
+      'rule-2',
     ]);
   });
 });
@@ -87,7 +111,13 @@ if (COMPILE_TIME_ONLY) {
   acceptsObligation({
     ...OBLIGATION,
     // @ts-expect-error - PFOS-ENG-00 §14: an identifier is opaque and branded, never a bare string.
-    obligationId: 'obligation-1',
+    ruleId: 'rule-1',
+  });
+
+  acceptsObligation({
+    ...OBLIGATION,
+    // @ts-expect-error - PFOS-ENG-00 §14: an identifier is opaque and branded, never a bare string.
+    ruleVersionId: 'rule-version-1',
   });
 
   acceptsObligation({
@@ -120,6 +150,24 @@ if (COMPILE_TIME_ONLY) {
     roundingPolicyId: 'nearest-cent',
   });
 
+  /*
+   * The two directives below guard the retired members. Each supplies a
+   * type-correct value, so the only diagnostic available is the excess property
+   * itself rather than a branding or arity error that would pass for the wrong
+   * reason.
+   */
+  acceptsObligation({
+    ...OBLIGATION,
+    // @ts-expect-error - Decision 090: sequence is removed from the resolved obligation.
+    sequence: 1,
+  });
+
+  acceptsObligation({
+    ...OBLIGATION,
+    // @ts-expect-error - Decision 091: obligationId is retired; the stable identity is ruleId.
+    obligationId: asEntityId('obligation-1'),
+  });
+
   // @ts-expect-error - Decision 074: the resolved obligation is immutable.
-  OBLIGATION.sequence = 2;
+  OBLIGATION.incomeBasis = 'NET_DEPOSITED';
 }

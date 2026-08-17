@@ -18,6 +18,25 @@ import type { RuleExplanation } from './rule-explanation';
 import type { SkippedRule } from './skipped-rule';
 
 /**
+ * The schema version assigned to the current `ResolvedRuleSet` contract
+ * (Decision 092).
+ *
+ * Decision 092 ratified the previously implicit baseline of 1, naming the
+ * seven-member `ResolvedGlobalObligation` shape that carried `obligationId` and
+ * `sequence`, and established 2 for the shape Decisions 090 and 091 decided.
+ * Both incompatible changes are carried by that one transition.
+ *
+ * Changing the persisted contract incompatibly requires a new version under
+ * Decision 074, never a silent edit of this value.
+ *
+ * This versions the persisted `ResolvedRuleSet` contract and nothing else. It is
+ * not the database schema version, the backup format version, or the application
+ * version, and Decision 092 leaves its relationship to the conceptual
+ * `PlanSnapshot` schema version undetermined.
+ */
+export const RESOLVED_RULE_SET_SCHEMA_VERSION = 2;
+
+/**
  * The single output of the Rule Engine and the single rule input to the
  * Allocation Engine (Decision 074).
  *

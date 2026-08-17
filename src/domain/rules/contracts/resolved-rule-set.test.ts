@@ -14,7 +14,7 @@ import type { ResolvedGoalPolicy } from './resolved-goal-policy';
 import type { ResolvedLeftoverPolicy } from './resolved-leftover-policy';
 import type { ResolvedPoolPlan } from './resolved-pool-plan';
 import type { ResolvedRolloverPolicy } from './resolved-rollover-policy';
-import type { ResolvedRuleSet } from './resolved-rule-set';
+import { RESOLVED_RULE_SET_SCHEMA_VERSION, type ResolvedRuleSet } from './resolved-rule-set';
 import type { ResolvedTopPriorityPlan } from './resolved-top-priority-plan';
 import type { RuleExplanation } from './rule-explanation';
 import type { SkippedRule } from './skipped-rule';
@@ -51,12 +51,11 @@ function instant(epochMilliseconds: number, timeZone: string): Timestamp {
  * wired to the accepted contracts rather than to shapes redeclared here.
  */
 const OBLIGATION: ResolvedGlobalObligation = {
-  obligationId: asEntityId('obligation-1'),
+  ruleId: asEntityId('rule-1'),
   ruleVersionId: asEntityId('rule-version-1'),
   destinationBucketId: asEntityId('bucket-1'),
   rateBasisPoints: rate(1000),
   incomeBasis: 'NET_DEPOSITED',
-  sequence: 1,
 };
 
 const TOP_PRIORITIES: ResolvedTopPriorityPlan = {
@@ -124,7 +123,7 @@ const EVALUATION_DATE: FinancialDate = date(2026, 1, 1);
 const RULE_SET: ResolvedRuleSet = {
   resolvedRuleSetId: asEntityId('resolved-rule-set-1'),
   planVersionId: asEntityId('plan-version-1'),
-  schemaVersion: 1,
+  schemaVersion: RESOLVED_RULE_SET_SCHEMA_VERSION,
   roundingPolicyId: ROUNDING_POLICY_ID,
   resolvedAt: RESOLVED_AT,
   evaluationDate: EVALUATION_DATE,
@@ -169,10 +168,22 @@ const REQUIRED_FIELDS: readonly string[] = [
   'warnings',
 ];
 
+/*
+ * Decision 092 ratified the baseline of 1 for the shape that carried
+ * obligationId and sequence, and established 2 for the shape Decisions 090 and
+ * 091 decided. Pinning the literal here keeps the decided value under test while
+ * every producer below names the constant.
+ */
+describe('RESOLVED_RULE_SET_SCHEMA_VERSION', () => {
+  it('is the version Decision 092 established', () => {
+    expect(RESOLVED_RULE_SET_SCHEMA_VERSION).toBe(2);
+  });
+});
+
 describe('ResolvedRuleSet', () => {
   it('is constructible complete', () => {
     expect(RULE_SET.resolvedRuleSetId).toBe('resolved-rule-set-1');
-    expect(RULE_SET.schemaVersion).toBe(1);
+    expect(RULE_SET.schemaVersion).toBe(RESOLVED_RULE_SET_SCHEMA_VERSION);
     expect(RULE_SET.resolutionMode).toBe('PREVIEW');
     expect(RULE_SET.allocationBasis).toBe('NET_AMOUNT');
   });
