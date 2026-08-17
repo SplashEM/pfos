@@ -7783,6 +7783,297 @@ Reconsider when a persistence layer or a stored Plan Snapshot is introduced, sin
 
 ---
 
+# Decision 093: Terminal Product Defaults and Default-Sourced Provenance
+
+**Status:** Accepted
+**Related:** Decisions 014, 020, 023, 025, 026, 027, 028, 068, 071, 074, 075, 078, 080, 081, 082, 083, 084, 085, 086, 088, 090, 091, 092
+**Scope:** Financial logic, Architecture, Engineering, Data
+
+## Decision
+
+The product default for `ResolvedRuleSet.leftoverPolicy` is `LEAVE_UNALLOCATED`.
+
+The product default for `ResolvedRuleSet.allocationBasis` is `NET_AMOUNT`.
+
+`requiredFundingRules` receives no product default. Required funding is satisfied through authored configuration, and the direction is plan completeness rather than a default.
+
+Whenever a resolved entry can legitimately be produced either by an authored `RuleVersion` or by a product default, its provenance is expressed through two explicit, mutually exclusive states rather than through an absent identifier. That is a general semantic rule of the Rule Engine.
+
+Its persisted-contract consequence is applied here to `ResolvedRolloverPolicy` and to no other family, because rollover is the only family for which product-default sourcing is already established by an accepted source.
+
+This decision settles semantics. It fixes no source property names, selects no numeric `schemaVersion`, defines no migration, authorises no implementation, and does not make any rule family materializable.
+
+## Which fields have no empty representation
+
+Two members of `ResolvedRuleSet` have no empty value and therefore cannot be satisfied at all when no authored rule addresses them:
+
+- `leftoverPolicy`, a required discriminated union in which every arm is a policy;
+- `allocationBasis`, a required enumeration with no empty member.
+
+Decision 080 recorded that a resolution addressing neither slot has no established value and that the contract cannot then be satisfied. That structural totality problem is confined to these two members.
+
+`requiredFundingRules`, `goalPolicies`, `rolloverPolicies` and `globalObligations` are readonly arrays. An empty array satisfies the contract in every case, so none of them is structurally unsatisfiable. Where their semantics are incomplete, the question is what a valid plan requires, which is a different question treated separately below. Nothing in this decision may be read as calling those collections unsatisfiable.
+
+## The leftover policy default
+
+The product default for `leftoverPolicy` is `LEAVE_UNALLOCATED`.
+
+No previously accepted source designated it. Decision 080 recorded that PFOS-ENG-01 §16.2 lists `Leave unallocated` among the supported types without designating it the product default. That reading is correct and is not disturbed. This decision performs the designation.
+
+Four grounds support it.
+
+Decision 020 requires that a default exist. Its Consequences state that "a simple default and optional advanced policy editor are required," and its Future Review Trigger contemplates reconsidering the default policy during onboarding design. Decision 020 commits the product to having one while naming none.
+
+Constitution Principle 2 requires sensible default behaviour so that users receive value quickly, and states that users "should not need to configure dozens of settings before completing their first paycheck allocation." A leftover policy that must be authored before a first allocation is possible sits against that requirement.
+
+The accepted vocabulary narrows the field structurally. Of the five arms Decision 074 fixes, `SINGLE_DESTINATION` needs a destination bucket, `PERCENTAGE_SPLIT` needs an authored split, `MAINTAIN_BUFFER_THEN_REDIRECT` needs a buffer amount and a destination, and `HIGHEST_PRIORITY_UNFINISHED_GOAL` needs goal state that no default can supply. `LEAVE_UNALLOCATED` is the only arm inhabitable without authored data. This is a property of the accepted contract rather than a preference.
+
+Constitution Principles 4 and 5 favour it among the arms. Every other arm commits the user's remainder to a destination the user did not choose, which is a financial decision made silently, while `LEAVE_UNALLOCATED` commits nothing and leaves the money visible for the user to direct.
+
+The designation plugs into Decision 080's existing mechanism, under which the product default supplies the value where no rule at §6 levels 5 through 8 addresses the slot, applied only to a slot for which an accepted product default exists. Decision 080 is not amended; a slot it listed as lacking a default now has one.
+
+No contract shape changes. `ResolvedLeftoverPolicy` already contains the arm and carries no provenance member.
+
+## The allocation basis default
+
+The product default for `allocationBasis` is `NET_AMOUNT`.
+
+Decision 080's record is correct and is not disturbed. It stated that no accepted source names a default basis, and none designates one. This decision performs the designation as an explicit product commitment.
+
+PFOS-ENG-02 §10 supplies the behavioural ground. It states that the Allocation Engine begins with an initial pool equal to the income event net amount, and that some workflows may instead use the eligible allocatable amount if the income event includes money excluded from planning. That is an ordinary case and a conditional exception. Decision 068 permits a more specific lower-authority document to refine an implementation detail left open above it, and the default basis is such a detail.
+
+Both concepts remain available. PFOS-ENG-02 §6 supplies an income event carrying both a net amount and an eligible amount, so selecting a default basis removes neither from the Allocation Engine's reach, and an authored rule addressing this slot continues to override the default under Decision 080.
+
+**What this does not decide.** Selecting `NET_AMOUNT` as the default allocation basis does not decide who computes eligible income, how eligible income is aggregated across income sources, how double counting is prevented, or Blocker F generally. Decision 074 records that Blocker F does not change the `ResolvedRuleSet` contract because the contract names the selected basis rather than carrying the computed amount, and that separation is preserved exactly. Nothing here may be read as closing, narrowing or advancing Blocker F.
+
+No contract shape changes. `AllocationBasis` already contains the member, and the field carries no provenance.
+
+## Required funding receives no product default
+
+PFOS-ENG-01 §15 states that every allocatable bucket must use one supported funding rule.
+
+No product default supplies one, and none can. Decision 082 records that every field in §15.1 through §15.8 is an irreducibly per-bucket value — target amount, due date, reserved balance, monthly minimum, deadline, minimum payment — so a higher-level default carrying one of them would be meaningless for its children. Decision 082 also records that §15's requirement can be satisfied only by authoring, and it routed the completeness question here.
+
+Decision 093 establishes that required funding is satisfied through authored configuration rather than a product default. The exact plan-completeness predicate remains open until "allocatable bucket" is defined.
+
+The term appears in §15 and in PFOS-ENG-02 §10's "eligible allocatable amount", and no accepted source defines which buckets it covers. Until it does, the set of buckets the requirement ranges over is unknown, so the behaviour is not specified fully enough to be checked. This decision does not define the term, names no error code, chooses no validation timing, and authorises no validator. Decision 073's convention holds.
+
+An empty `requiredFundingRules` collection remains structurally valid, and a plan with no allocatable buckets is an ordinary case.
+
+## Goal-policy population remains unresolved
+
+No whole `ResolvedGoalPolicy` is synthesized for every bucket by this decision.
+
+Decisions 025, 026 and 027 supply semantics and defaults for individual goal-policy behaviours. Decision 025 pauses automatic allocation when a goal reaches its target, Decision 026 creates the next cycle of a completed recurring goal with the same settings and defaults to asking the user to confirm the target, and Decision 027 asks before resuming funding when a funded bucket falls below target. Each speaks of a bucket that has a goal or a target.
+
+None establishes which buckets receive a `ResolvedGoalPolicy` entry. Decision 080 recorded the same finding: those decisions and §15.5 supply defaults for individual fields, but no accepted source assembles them into a default for the whole four-field slot, and whether a bucket without a goal rule receives an entry at all is a population question it did not settle.
+
+`goalPolicies` is structurally representable as an empty array, so nothing is unsatisfiable while the question stands. The population depends on bucket and goal state, which a future evaluation-context contract supplies and which no accepted source fixes.
+
+The `goalPolicies` population therefore remains unresolved. This decision does not decide whether entries are synthesized from field-level product defaults, authored only, or populated some other way, and it does not treat any of those models as rejected. The duplication between `ResolvedGoalPolicy` and the `GOAL_UNTIL_TARGET` variant of `FundingRuleConfig`, recorded by Decision 086, is untouched and remains unresolved.
+
+## The rollover provenance gap is already live
+
+The defect this decision repairs exists today and does not arise from any default it creates.
+
+Decision 028 states that all bucket balances carry forward by default, PFOS-ENG-01 §17.1 fixes that default as `CARRY_ALL`, and Decision 080 lists it among the three product defaults an accepted source already establishes.
+
+Decision 081 records that under Decision 028 most buckets author no rollover rule, so their resolved entry would come from the product default and has no rule version to name. Decision 080 requires the product default to supply the resolved value where no rule at levels 5 through 8 addresses the slot, and Decision 074 forbids the Allocation Engine from re-resolving, so an unfilled slot could not be executed.
+
+`ResolvedRolloverPolicy` carries a non-optional `ruleVersionId`, and no genuine `RuleVersion` exists for a value a product default supplied.
+
+The accepted contract therefore cannot truthfully represent an already-accepted product default, for what Decision 081 describes as most buckets. That is a present defect in accepted authority, and it is why provenance is settled alongside the defaults rather than after them.
+
+The other two established product defaults do not have this problem. The lower-priority even split reaches `ResolvedPoolDestination`, whose `ruleVersionIds` is plural, and the `SEQUENTIAL` top-priority strategy is valid with an empty entry list under Decision 075.
+
+## The general provenance semantic
+
+Whenever a resolved entry can legitimately be produced either by an authored `RuleVersion` or by a product default, its provenance is expressed through two mutually exclusive conceptual states.
+
+**Authored provenance.** The entry's provenance kind identifies it as authored, and it carries the exact `RuleVersionId` of the rule version that produced the value.
+
+**Product-default provenance.** The entry's provenance kind identifies it as product-default sourced, and it carries no `RuleVersionId`.
+
+The invariants are these. Authored provenance carries exactly one genuine `RuleVersionId`. Product-default provenance carries none. The two states are mutually exclusive, and an entry carrying both or neither is unrepresentable rather than merely invalid. Absence alone is never overloaded to mean product-default provenance. No sentinel or fabricated `RuleVersionId` is permitted. No implicit `Rule` or `RuleVersion` is manufactured for a product default.
+
+This is a general rule. It binds any resolved family that meets its antecedent, whether or not that family is known today. It settles semantics and does not fix property names, discriminant spelling or type structure; those belong with the contract and schema work described below.
+
+**Why explicit rather than absent.** PFOS-ENG-01 §47.8 requires discriminated unions rather than loosely structured objects. More directly, the corpus has three times refused to let absence carry a meaning: Decision 085 refused an absent or nullable configuration as a way of expressing a stop, Decision 086 refused a nullable configuration for the same reason, and Decision 088 refused an absent applicability value meaning universal applicability. Each rests on PFOS-ENG-00 §29.1, under which imported content is untrusted and a truncated record is indistinguishable from an authored one. A missing `ruleVersionId` would be indistinguishable from a product-default entry on exactly those terms, and reading it as one would be a silent financial decision under Constitution Principle 4.
+
+**Why a product default carries no rule identity.** Decision 081 establishes that a product default is not an authored `Rule`. PFOS-ENG-01 §8.1 calls it "a predefined fallback used only when the user has not made a choice"; §18 requires every permanent rule to carry a created timestamp, effective start, optional end, status and version identifier, none of which a product default has; Decision 078 places the effective period on a version, and a product default has no period; and §40's audit records a user's change between two versions, while a product default changes only when the application ships.
+
+It follows that a product default has no `RuleId`, no `RuleVersionId`, no lifecycle status under Decision 083, and no authored scope under Decision 082. It is not addressed by `Rule.owner` and `Rule.slotKind`, and it is not subject to Decision 084's authored-scope uniqueness. This decision creates no `ProductDefaultId`, no `ProductDefaultVersionId`, no fabricated `RuleId` or `RuleVersionId`, no lifecycle status for product defaults, and no authored scope for them.
+
+## Where the persisted consequence applies
+
+The general semantic above is a rule about meaning. Its persisted-contract consequence is applied only where an accepted source already establishes that a family can be product-default sourced.
+
+**`ResolvedRolloverPolicy` — in scope now.** Decision 028, §17.1 and Decision 080 already establish `CARRY_ALL` as its product default, and Decision 081 records that most buckets author no rollover rule. The antecedent of the general rule is satisfied today, and the existing required `ruleVersionId` cannot truthfully represent the resulting state. `ResolvedRolloverPolicy` therefore adopts the explicit provenance states.
+
+**`ResolvedFundingRule` — not in scope.** This decision holds that required funding receives no product default and is satisfied by authored configuration, and Decision 082 shows that a meaningful higher-level default cannot exist for it. The antecedent is therefore unsatisfied: the family cannot legitimately be produced by a product default. Its required `ruleVersionId` is not shown defective by default-sourced provenance, and its persisted contract does not change on that ground. `ResolvedFundingRule` remains authored-sourced. If a future accepted decision ever introduces a funding product default, that decision must revisit provenance for this family. The open definition of "allocatable bucket" concerns the completeness predicate rather than provenance and creates no default-sourced entry.
+
+**`ResolvedGoalPolicy` — deferred.** This decision leaves the `goalPolicies` population unresolved, so it is not established that a product-default-sourced `ResolvedGoalPolicy` exists at all. That depends on whether a later decision determines which buckets receive an entry, and whether any entry is synthesized from field-level product defaults without an authored `GOAL_POLICY` rule. Applying a shape change now would version a contract against a case that may never arise and would prejudge the population answer. The persisted-shape consequence is therefore deferred. If a later population decision creates default-sourced `ResolvedGoalPolicy` entries, that decision must apply the general provenance semantic above, and Decision 074 will govern any resulting incompatible persisted change. Its future shape is not prejudged here.
+
+**Families that need nothing.** `ResolvedLeftoverPolicy` carries no provenance member; `allocationBasis` is a bare enumeration on the root; `ResolvedPoolDestination` and `ResolvedTopPriorityEntry` and their extensions carry plural `ruleVersionIds`; and `ResolvedGlobalObligation` is untouched, since Decision 080's enumeration of established product defaults contains no global obligation. Decisions 090, 091 and 092 are unaffected.
+
+Whether an empty plural `ruleVersionIds` is the final canonical representation of a product-default contribution on the pool and top-priority families is not decided here. Existing authority requires no more than that those shapes can hold what produced them, and Decision 082 records that they will carry a single element in V1. If a canonical representation is wanted for them, it belongs to a separate decision.
+
+## sourceRuleVersionIds is unchanged
+
+`ResolvedRuleSet.sourceRuleVersionIds` contains genuine `RuleVersionId` values only. Decision 074 defines it as references identifying the versions that produced the resolved values, de-duplicated and sorted, and Decision 081 establishes that a product default is not a Rule and has no version.
+
+A product-default contribution therefore adds no identifier to that collection. No sentinel, no product-default identifier and no other non-rule-version value may be inserted, and the field is not repurposed to carry product-default provenance.
+
+A consequence is recorded rather than resolved: a resolved set whose values are wholly default-sourced carries an empty `sourceRuleVersionIds`. That is coherent, because no rule version produced any of them, and the entry-level provenance state is what distinguishes the case for the family that carries one.
+
+`sourceRuleVersionIds` keeps its membership, de-duplication, sort and its place in Decision 074's reproducibility-only ordering list. Its treatment for a stop remains deferred where Decision 085 left it.
+
+## Historical reproducibility
+
+Decision 074 stores the complete `ResolvedRuleSet` by value inside a Plan Snapshot. The exact resolved policy value is therefore preserved, and a later product release that changes a default cannot alter a stored historical result. Constitution Principle 11 and PFOS-ENG-00 §32 Invariant 10 are satisfied without any further mechanism.
+
+The explicit provenance state adds what the stored value alone cannot say: whether the value came from an authored rule version or from a product default. That is what makes such an entry explainable under Constitution Principle 9 and traceable under Principle 12, which asks which rule or plan version was used and names no third concept.
+
+No accepted source currently requires a separate product-default identity or a product-default version identity, and none is created here. Whether a future audit requirement needs to identify the exact product release or default definition that supplied a product-default value is left open. It must not be solved with a fabricated default version identifier, and Decision 081's observation that a product default changes only when the application ships is recorded as the nearest existing concept rather than adopted as an answer.
+
+This decision assigns no semantics to the conceptual `PlanSnapshot` schema version, whose relationship to `ResolvedRuleSet.schemaVersion` Decision 092 left undetermined.
+
+## Schema consequence
+
+This decision establishes one live incompatible persisted contract change: `ResolvedRolloverPolicy`, whose existing required `ruleVersionId` cannot represent the already-accepted `CARRY_ALL` product-default case.
+
+Decision 074 therefore requires another `ResolvedRuleSet` schema-version increment from the current `schemaVersion` 2. The numeric target is deferred.
+
+`ResolvedGoalPolicy` and `ResolvedFundingRule` do not change shape under this decision, and no transition batches several family changes together on the strength of it. Future goal-policy population work may create another incompatible change if it establishes default-sourced entries, and Decision 074 will govern it if so. Required funding has no product-default provenance change here.
+
+This decision selects no numeric value, defines no migration behaviour, and authorises no compatibility reader in either direction. Those remain where Decision 092 left them: undefined and deferred.
+
+Decision 074's schema-version rule is applied, not amended, narrowed or excepted. No pre-persistence exception is created, on the ground Decision 090 gave and Decisions 091 and 092 each preserved.
+
+Nothing here should be read as establishing that source-level field typing alone exhaustively defines what makes a persisted contract change incompatible. Decision 074 governs that question on its own terms.
+
+The two defaults designated by this decision cause no contract change and carry no schema consequence of their own.
+
+## What this decision closes
+
+The missing product default for `leftoverPolicy`.
+
+The missing product default for `allocationBasis`.
+
+The question whether required funding receives a product default: it does not.
+
+The general semantic rule distinguishing authored provenance from product-default provenance, for any resolved family that can legitimately be produced either way.
+
+The live `ResolvedRolloverPolicy` provenance defect, at the semantic level.
+
+It does not close the complete required-funding plan-completeness behaviour, which awaits a definition of "allocatable bucket".
+
+## What this decision does not close
+
+Whether `ResolvedGoalPolicy` can be product-default sourced at all, and its persisted shape if it can.
+
+The `goalPolicies` population.
+
+`ResolvedFundingRule`'s provenance shape beyond retaining authored rule-version provenance under the no-default holding above.
+
+The definition of "allocatable bucket". The full required-funding completeness behaviour. The `GOAL_POLICY` and `GOAL_UNTIL_TARGET` duplication. The `GLOBAL_OBLIGATION` `RuleConfiguration` payload and the authored provenance of its `maximumAmount`. The canonical ordering key for `globalObligations`. The `LOWER_PRIORITY_POOL` `FIXED_AMOUNTS` authored sequence. The `RuleConfiguration` union, `ConfiguredRuleVersion`, the full `RuleVersion` contract and its §41 metadata. The contract pairing a `Rule` with its versions. Evaluation-context API and population. Explanation multiplicity. Blocker F. The `resolvedRuleSetId` determinism question. The identifier-ordering documentation wording. Product-default identity and versioning. The canonical product-default representation on plural-`ruleVersionIds` families. The numeric `ResolvedRuleSet` schema-version target, migration architecture and compatibility readers. All Milestone 3 behaviour.
+
+## No implementation is authorised
+
+No source change is authorised by this decision.
+
+A later bounded implementation will eventually be required, and it is described here only so that its shape is not settled by whichever implementation lands first. It would carry the explicit provenance states on `ResolvedRolloverPolicy` alone, adopt the schema version the deferred numeric decision selects, and update the rollover fixtures and tests. That work requires a later implementation authorisation, taken once the contract spelling and the numeric schema transition are both settled. It does not touch `ResolvedGoalPolicy` or `ResolvedFundingRule`.
+
+The general provenance semantic may be reused by another family only after that family's product-default sourcing is itself established by an accepted decision.
+
+No validator is authorised, no validator API is defined, no error code is registered or named, and no registry changes. No resolver, evaluation context, `RuleConfiguration` arm or Milestone 3 behaviour is established.
+
+## Unchanged by this decision
+
+No engineering specification text is superseded, amended or replaced. PFOS-ENG-00, PFOS-ENG-01 and PFOS-ENG-02 are not altered.
+
+Decision 074 is applied rather than amended, except that `ResolvedRolloverPolicy` will change shape as recorded above; its schema-version rule and every other element stand. Decision 080's fallback mechanism, its classification of slots, and its record that no source previously designated these two defaults are all preserved. Decision 081's holding that a product default is not a Rule is applied, not narrowed. Decisions 014, 020, 025, 026, 027, 028, 075, 082, 083, 084, 085, 086, 088, 090, 091 and 092 are unamended.
+
+`ResolvedRuleSet`'s field list is unchanged, `sourceRuleVersionIds` is unchanged, `ResolvedGoalPolicy`, `ResolvedFundingRule` and `ResolvedGlobalObligation` are unchanged, Plan Snapshot design is unchanged, and no numeric `schemaVersion` is changed.
+
+## Why
+
+Decision 080 discovered that two required fields had no established value and recorded the gap rather than inventing a default, because a product default is a product commitment under Constitution Principle 2. Decision 081 discovered that entries supplied by an already-accepted default had no way to express provenance. Decisions 082 and 084 each routed further questions to a terminal-default decision. This is that decision.
+
+Taking the defaults and the provenance together is what Decision 081 required, and it is what keeps the result usable: a default recorded for a bucket-keyed family without a provenance representation would be unrepresentable the moment it was accepted.
+
+The two defaults are chosen where the corpus already points. Decision 020 requires a leftover default to exist and the accepted vocabulary leaves one arm inhabitable without authored data. PFOS-ENG-02 §10 states which pool the Allocation Engine begins with. Neither was a designation, so this decision makes both explicit.
+
+Separating the general semantic from its persisted consequence is what keeps the decision proportionate. The semantic costs nothing to state and prevents the question from being answered differently by each family that meets it later. The contract change is confined to the one family whose default sourcing an accepted source already establishes, so no contract is versioned against a case that may never arise, and no population question is prejudged.
+
+The provenance model follows the corpus's own method rather than convenience. Three accepted decisions have refused to let absence carry meaning, and one has refused to represent product defaults as authored rules. An explicit state satisfies both refusals at once.
+
+## Alternatives Considered
+
+Requiring an authored leftover policy instead of a default was rejected. Decision 020 requires a simple default, and Constitution Principle 2 states that users should not need to configure many settings before completing a first paycheck allocation. It would also have required a new plan-completeness invariant where Decision 080's existing fallback mechanism already suffices.
+
+Designating another leftover arm as the default was rejected. `SINGLE_DESTINATION`, `PERCENTAGE_SPLIT` and `MAINTAIN_BUFFER_THEN_REDIRECT` each require authored data a default cannot supply, and `HIGHEST_PRIORITY_UNFINISHED_GOAL` requires goal state. Each would also commit the user's remainder to a destination the user never chose, against Constitution Principles 4 and 5.
+
+Designating `ELIGIBLE_AMOUNT` as the default basis was rejected. PFOS-ENG-02 §10 presents it as the conditional case for income events containing money excluded from planning, not the ordinary one. It is not rejected because it would decide Blocker F — it would not, since Decision 074 records that the contract names the basis rather than carrying the amount, and PFOS-ENG-02 §6 supplies both amounts on the income event. It is rejected because it inverts §10's stated ordinary case, and because it would make every default resolution depend on a quantity whose computation and double-count ownership is unresolved.
+
+Requiring an authored allocation basis was rejected for the reason given for leftover: it would block a first allocation, and Decision 086 records that no accepted source establishes that a user authors this slot at all.
+
+A product default for required funding was rejected as impossible rather than merely undesirable. Decision 082 establishes that every §15 funding field is an irreducibly per-bucket value, so a higher-level default carrying one would be meaningless for its children.
+
+Making `ruleVersionId` optional was considered and rejected. It is the simplest change and Decision 081 anticipated it, but absence would have to mean product-default provenance, which is the reading Decisions 085, 086 and 088 each refused, and which PFOS-ENG-00 §29.1 makes unsafe because a truncated import is indistinguishable from an authored omission.
+
+A separate provenance discriminator retained beside an optional `ruleVersionId` was rejected. It creates two fields that can disagree, the objection Decision 081 sustained against a stored precedence level, Decision 083 against a dated status, Decision 085 against an independent terminating flag and Decision 090 against a redundant ordinal.
+
+A sentinel or fabricated `RuleVersionId` for product-default entries was rejected. The primary objection is semantic truthfulness: Decision 081 establishes that a product default is not a Rule, so it has no genuine `RuleVersion`, and persisting a fabricated identifier would represent product-default provenance as authored rule-version provenance — a false statement in a contract Decision 074 persists by value and Constitution Principle 12 requires to be traceable. Identifier opacity supplies a further reason not to reserve a magic literal inside an identifier space PFOS-ENG-00 §14 leaves unformatted, as Decisions 086 and 088 each recorded when refusing §42.1's sentinel. That reason is additional rather than primary.
+
+Manufacturing an implicit `RuleVersion` for product defaults was rejected. Decision 081 refused to represent product defaults as authored rules on grounds that apply unchanged: §18's required fields, the absence of an effective period, §40's audit of a user's change, and Decision 074's by-value snapshot removing any need for it. Decision 081 also recorded that this option would have concealed the provenance gap.
+
+Avoiding default-sourced rollover entries through a plan-completeness requirement was rejected. It would contradict Decision 028's holding that all bucket balances carry forward by default, and Constitution Principle 2's prohibition on requiring many settings before a first allocation. Plan completeness is adopted for required funding instead, where Decision 082 shows a default is impossible in principle. No conclusion is drawn about goal policy, whose population is unresolved.
+
+Applying the persisted provenance change to every family carrying a singular required `ruleVersionId` was considered and rejected. It would version `ResolvedFundingRule` against a case this decision's own holdings deny, and `ResolvedGoalPolicy` against a case no accepted source has established, prejudging the population question. The general semantic already binds them if and when their antecedent is met.
+
+Deferring the rollover change as well, and stating only the general semantic, was considered and rejected. The rollover defect is live today under Decisions 028, 080 and 081, and leaving an accepted product default unrepresentable while recording that it will be repaired later is the slower form of the silent outcome Decision 068 forbids.
+
+Applying one provenance representation to every resolved family was rejected. Family-specific scope is retained because the existing shapes already differ: two families carry no provenance member and two carry plural identifier lists, so extending the states to them would change contracts this decision has no reason to change.
+
+## Tradeoffs
+
+One nested persisted contract changes shape, so a further schema-version increment is owed before it can be implemented, and the source contract will differ from the decided contract until that transition is taken.
+
+Two product commitments are made that no prior source designated. Both are recorded as this decision's own act rather than as findings, so a later reconsideration knows exactly what it is revisiting.
+
+A general semantic is stated while only one family adopts its persisted form, so a reader learns the rule before seeing it applied twice. That is the intended trade: the rule is stated once, and each family adopts it when its own default sourcing is established rather than by anticipation.
+
+Required funding gains a direction without a checkable predicate, because "allocatable bucket" is undefined. The invariant is known before it is enforceable, as Decisions 082, 085, 086 and 091 each recorded for other invariants.
+
+The `goalPolicies` population remains open, so one of the four slots Decision 080 listed is left where it stood, and this decision says so rather than inventing a population rule.
+
+Product defaults gain explicit provenance without gaining identity, so a snapshot can say that a value came from a default but not which definition of that default supplied it. That is accepted deliberately and recorded as open.
+
+## Consequences
+
+`leftoverPolicy` and `allocationBasis` have accepted product defaults, and Decision 080's fallback mechanism becomes total for both.
+
+A general rule now governs how any resolved family distinguishes authored provenance from product-default provenance.
+
+`ResolvedRolloverPolicy` adopts explicit provenance states, and Decision 081's provenance gap is closed for the one family in which it is live.
+
+`ResolvedGoalPolicy` and `ResolvedFundingRule` are unchanged, and their provenance questions are recorded as deferred and as inapplicable respectively.
+
+A further incompatible persisted change is owed against the current `schemaVersion` 2, with the numeric target deferred.
+
+Required funding is settled as authored rather than defaulted, with its completeness predicate open.
+
+No implementation is authorised, no code registry changes, and Milestone 2 gains no new implementable contract from this decision.
+
+Blocker C's remainder and Blocker F remain open and continue to gate the work they name.
+
+## Future Review Trigger
+
+Reconsider when the `goalPolicies` population is settled, since default-sourced goal-policy entries would then adopt the general provenance semantic and Decision 074 would govern any resulting incompatible change; if any future accepted decision introduces a product default for required funding, since that family's provenance would then need revisiting; when "allocatable bucket" is defined, since the required-funding completeness predicate becomes statable; when the numeric schema-version decision is taken, since the rollover provenance implementation is gated on it; when the contract spelling for the provenance states is fixed, since the implementation authorisation follows it; if an accepted source ever requires identifying which product-default definition supplied a value, since no identity exists for one; if onboarding design revisits the leftover default, as Decision 020's own trigger contemplates; or if a future accepted source designates a different default basis, since PFOS-ENG-02 §10 is the ground for this one.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
