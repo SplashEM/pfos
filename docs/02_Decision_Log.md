@@ -6984,6 +6984,220 @@ Reconsider when the field's contract disposition and a canonical key are taken u
 
 ---
 
+# Decision 090: ResolvedGlobalObligation.sequence Is Removed
+
+**Status:** Accepted
+**Related:** Decisions 023, 068, 071, 073, 074, 078, 079, 080, 081, 082, 086, 088, 089
+**Scope:** Financial logic, Architecture, Engineering, Data
+
+## Decision
+
+`sequence` is removed from `ResolvedGlobalObligation`.
+
+Removing a required member is an incompatible `ResolvedRuleSet` contract change under Decision 074, so a schema-version consequence exists. This decision does not select a numeric `schemaVersion`, does not increment one, does not authorise the source removal, and does not define migration mechanics.
+
+This decision settles the semantic contract disposition of that field and nothing else. It adopts no canonical ordering key, decides no projection cardinality, resolves no `obligationId` question, defines no `GLOBAL_OBLIGATION` payload, and does not make `GLOBAL_OBLIGATION` materializable.
+
+## Why the field is removed
+
+Decision 089 established that `ResolvedGlobalObligation.sequence` has no financial execution meaning in V1. What remained was what becomes of the member itself.
+
+Decision 074's reproducibility-only collections encode canonical order at the array level rather than with per-item ordinals. Pool destinations, leftover percentage destinations, rollover policies and goal policies are ordered by bucket identifier, `sourceRuleVersionIds` is de-duplicated and sorted, and `skippedRules` is ordered by rule identifier. In every case the ordering is a property of the emitted array, not a datum stored on a member.
+
+Retaining `sequence` as canonical-only metadata would duplicate array position. It would record twice what the array already states, and the two can disagree. Decision 081 refused a stored precedence level, Decision 083 a dated status and Decision 085 an independent terminating flag, each on that objection, and Decision 086 accepted such a redundancy only after establishing that the value was not derivable. This one is.
+
+Making the field optional would create transitional and dual semantics. Absence would have to mean canonical-only while presence meant legacy, which is the shape Decision 085 refused for an absent configuration and Decision 088 refused for an absent applicability value.
+
+Replacing it with another ordinal merely renames the same redundancy.
+
+Deprecating it preserves a misleading dead field, in a contract, for as long as the deprecation lasts.
+
+Constitution Principle 25 chooses clarity when clarity and an additional feature conflict. A member that means nothing is the cost that principle exists to avoid.
+
+## Schema-version consequence
+
+Removing a required member from `ResolvedGlobalObligation` is an incompatible `ResolvedRuleSet` contract change under Decision 074. A schema-version consequence therefore exists.
+
+This decision does not select, increment or change any numeric `schemaVersion`, either in the Decision Log or in source.
+
+The numeric and migration decision should occur only after the resolved `GLOBAL_OBLIGATION` contract is stable enough to version. It is not stable now: `obligationId` remains unresolved under Decision 086, and resolving it may itself change this contract.
+
+A second reason applies independently. No accepted source establishes the current decision-level numeric `schemaVersion`, so there is no decided baseline to move from, and fixing one is a commitment about a persisted value rather than about the contract's shape.
+
+That the repository currently has no persistence layer, no stored Plan Snapshot and no migration machinery bears only on how simple the eventual transition will be. It is not a reason the rule does not apply, and no pre-persistence exception is created here.
+
+## Decision 074's schema-version rule is unchanged
+
+Decision 074 states that any incompatible persisted contract change requires a schema-version increment so that existing Plan Snapshots continue to reproduce the rules under which they were created.
+
+That rule is not amended, not narrowed and not excepted. It governs this change and every future one.
+
+## Supersedes Decision 074 only for the contract shape
+
+Decision 074 is superseded in one respect: `ResolvedGlobalObligation` no longer contains `sequence`.
+
+Decision 089 already superseded Decision 074's classification of the global-obligation ordering as financially meaningful. This decision removes the member itself and does nothing further to Decision 074.
+
+`globalObligations` is not added to Decision 074's reproducibility-only ordering list here. Every entry in that list names a key, and this decision adopts none. Entry into that list belongs with the decision that supplies the key.
+
+Decision 074's Status remains Accepted and it is not superseded as a whole. Preserved unchanged: `stageSequence`; top-priority rank ordering; `ResolvedFundingRule.sequence`; `ResolvedPoolFixedAmount.sequence` and the fixed-amount competition semantics; the Allocation Engine-owned residual-cent ordering; the existing reproducibility-only ordering entries; every other member and field of `ResolvedRuleSet`; `sourceRuleVersionIds`, which is a different field from `ResolvedGlobalObligation.ruleVersionId` and keeps its own de-duplicated and sorted ordering; and the schema-version rule.
+
+A later editorial cross-reference in Decision 074 at the affected point is recommended. That documentation cleanup is not part of this decision.
+
+## Canonical ordering remains unresolved
+
+`ResolvedRuleSet.globalObligations` still requires reproducibility-only canonical ordering for deterministic deep equality. Decision 074 requires that identical inputs produce a deep-equal `ResolvedRuleSet`, and PFOS-ENG-01 §26 requires all ordering to be explicit and stable.
+
+No canonical key is accepted by this decision.
+
+`ruleVersionId` is the strongest current candidate. It is already present on `ResolvedGlobalObligation`, so adopting it would add no field, and an opaque identifier may potentially serve reproducibility-only ordering under Decision 074's precedent, which orders six such collections by an identifier. Its totality depends on the projection cardinality recorded below, which is unresolved. It is not adopted.
+
+`obligationId` is not adopted. Its provenance remains unresolved under Decision 086, and sorting by it would mean one thing if it is the rule's own identity and another if it names a separate entity.
+
+`destinationBucketId` is not adopted. It is not necessarily total, because nothing forbids two global obligations targeting the same destination bucket.
+
+`ruleId` is not present on `ResolvedGlobalObligation` and must not be added merely to serve as a sort key.
+
+No compound key is adopted.
+
+Three constraints are recorded forward, to bind whichever key is eventually chosen. The array index will carry no financial meaning. The canonical ordering must never become execution priority, since Decision 089 settled that applicable global obligations are independent with no obligation financially prior to another. And repository, storage and iteration order cannot decide emission semantics, as PFOS-ENG-00 §32 Invariant 11 and PFOS-ENG-01 §26 require.
+
+The canonicalization gap Decision 089 recorded for this collection remains open.
+
+## Projection cardinality remains unresolved
+
+This decision does not decide whether one selected `GLOBAL_OBLIGATION` `RuleVersion` produces one `ResolvedGlobalObligation`, or potentially several.
+
+The question is tied to `obligationId` provenance and to future `GLOBAL_OBLIGATION` payload semantics. If `obligationId` is the rule's own identity, one version yielding one obligation follows. If it names a separate entity, one version naming several obligations becomes coherent. Decision 086 left that open, so the cardinality is open with it.
+
+Three things are recorded as evidence for a one-to-one projection, and as evidence only. Decision 074 types `ResolvedGlobalObligation.ruleVersionId` in the singular. `ResolvedTopPriorityEntry.ruleVersionIds` and `ResolvedPoolDestination.ruleVersionIds` are plural on structures that can conceptually assemble more than one version, a contrast Decision 082 noted when recording that those plural fields carry a single element in V1. And Decision 071, Decision 074, Decision 080 and PFOS-ENG-02 §14 all speak of separately authored global obligations and separately authored global rules interchangeably.
+
+That evidence points one way. It is not converted into authority here. Settling the cardinality in order to obtain a sort key would close a design space for a canonicalization convenience, which is not a sufficient reason.
+
+Decision 079 is unaffected and continues to select at most one effective version per rule. That is a statement about version selection, not about how many obligations a selected version contributes.
+
+## Decision 080 and Decision 089
+
+Decision 080 prohibited sourcing the `sequence` value from an identifier, from array position, or from repository order. Decision 089 preserved that prohibition for that field.
+
+This decision removes the field, so no `sequence` value is supplied from anything.
+
+Because no canonical array key is adopted here, Decision 080 is not broadened beyond that. Whether array-level canonical ordering by an identifier is permitted is a question for the decision that adopts a key.
+
+Decision 080 is not superseded and its Status remains Accepted.
+
+Decision 089 is unamended and preserved in full: `sequence` has no financial execution meaning, obligations are independent with no intra-stage priority, the overcommitted state is financially invalid, and canonical ordering must never become financial priority.
+
+## obligationId
+
+This decision does not resolve `obligationId` provenance.
+
+`ResolvedGlobalObligation.obligationId` remains non-optional, remains without an accepted source for its value, and therefore remains a field-level blocker to materializing `GLOBAL_OBLIGATION`. That is the same defect that blocked `sequence`, and removing `sequence` does nothing about it.
+
+## GLOBAL_OBLIGATION does not become materializable
+
+Removing `sequence` does not enable the slot.
+
+The remaining blockers include at least `obligationId` provenance, `GLOBAL_OBLIGATION` projection cardinality, the `GLOBAL_OBLIGATION` `RuleConfiguration` payload, the canonical ordering of `globalObligations`, resolver population, evaluation-context population, the questions Blocker C still touches, and Blocker F for eligible-income computation.
+
+## No implementation is authorised
+
+No source change is authorised, including removal of the member from the shipped contract and any change to the tests that reference it. That work follows the numeric and migration decision, which follows contract stability.
+
+No `schemaVersion` edit, no migration and no persistence work is authorised.
+
+No arm of `RuleConfiguration` is defined or authorised. No canonical key is adopted. No validator is authorised, no validator API is defined, no error code is registered or named, and no registry changes. `obligationId` provenance is not resolved. No Milestone 3 behaviour is established.
+
+## Deliberately not decided
+
+The canonical ordering key for `globalObligations`.
+
+Whether one selected `GLOBAL_OBLIGATION` `RuleVersion` contributes one obligation or several.
+
+`obligationId` provenance.
+
+The numeric `schemaVersion` transition, the exact version value, whether the absence of stored data changes migration mechanics, and the implementation and migration boundary.
+
+The `GLOBAL_OBLIGATION` payload and any arm of `RuleConfiguration`.
+
+Where and when Decision 089's overcommitment condition is detected, and any validator, validator API or error code.
+
+Eligible-income computation, aggregation and double-count prevention.
+
+Resolver population, evaluation-context population, Blocker C and Blocker F.
+
+The canonical ordering of any other collection, and the sequence fields of required funding and of fixed-amount pool destinations.
+
+## Unchanged by this decision
+
+No engineering specification text is superseded, amended or replaced. PFOS-ENG-01 and PFOS-ENG-02 are not altered.
+
+Decision 074 is superseded only for the contract shape recorded above and retains its Accepted status, including its schema-version rule. Decision 080 is not superseded and retains its Accepted status. Decision 089 is unamended. Decision 088's applicability semantics are untouched. Decision 086's `obligationId` record is untouched.
+
+`ResolvedRuleSet`'s field list is unchanged, `sourceRuleVersionIds` is unchanged, Plan Snapshot design is unchanged, and no numeric `schemaVersion` is changed.
+
+`RuleConfiguration`, `RuleVersion`, `ConfiguredRuleVersion` and `RuleVersionKind` remain as Decision 086 left them, and `TerminatingRuleVersion` remains the only concrete rule-version arm in source.
+
+Decisions 071, 078, 079, 081, 082, 085, 086, 088 and 089 are unamended.
+
+## Why
+
+Decision 089 emptied this field of meaning and recorded two questions as open: what becomes of the field, and how the array is canonically ordered.
+
+Only the first resolves from accepted authority today. Decision 074's own practice answers it — every reproducibility-only collection is ordered at array level and none stores an ordinal — and the alternatives to removal each reproduce a redundancy or an ambiguity the corpus has refused before.
+
+The second does not resolve yet, because every candidate key either depends on an unresolved question or is not total. Adopting one would have required settling projection cardinality, and that question belongs with `obligationId` provenance rather than with a serialization concern. Settling it here would close a design space to obtain a sort key, which is the wrong reason to close one.
+
+Keeping this decision to the field's disposition also keeps the schema-version question where it belongs. The contract is not yet stable, and versioning an intermediate shape would record a transition that no stored data ever held.
+
+## Alternatives Considered
+
+Retaining `sequence` as canonical-only ordering metadata was rejected: it would be the corpus's only per-item ordinal and it duplicates array position.
+
+Making `sequence` optional was rejected as dual meaning, the shape Decisions 085 and 088 each refused.
+
+Replacing `sequence` with another ordering field was rejected as the same design renamed.
+
+Deprecating the field was rejected: it preserves a misleading member of the contract for the duration.
+
+Adopting `ruleVersionId` as the canonical key in this decision was considered and rejected. It would have required establishing that a selected rule version contributes at most one obligation, which is entangled with `obligationId` provenance, and closing that design space for a canonicalization convenience is not a sufficient reason.
+
+Adopting `obligationId` or `destinationBucketId`, or a compound key, was rejected for the reasons recorded above.
+
+Selecting or incrementing a numeric `schemaVersion` was rejected: no accepted source fixes the current decision-level value, and the contract is not yet stable enough to version.
+
+Treating the absence of a persistence layer as an exception to Decision 074's schema-version rule was rejected. Creating an exception to an accepted rule inside a decision about something else is the silent resolution Decision 068 forbids.
+
+## Tradeoffs
+
+The field's disposition is settled while its version is not, so the source removal cannot proceed yet. If the intervening questions prove difficult, a member Decision 089 has already emptied of meaning will sit in the contract for several decisions. That is acceptable because nothing can be built on it, and it is recorded rather than left to be discovered.
+
+`globalObligations` now has neither a financial ordering nor an established canonical one. The requirement is recorded and unmet.
+
+`GLOBAL_OBLIGATION` remains unmaterializable, and this decision reduces the blocking fields by one without enabling anything.
+
+## Consequences
+
+`ResolvedGlobalObligation` will carry six members once the removal is implemented: `obligationId`, `ruleVersionId`, `destinationBucketId`, `rateBasisPoints`, `incomeBasis` and optional `maximumAmount`.
+
+A schema-version consequence exists and is deferred. No numeric value is selected, and no source change is authorised until that decision is taken.
+
+The canonicalization gap Decision 089 recorded for `globalObligations` remains open, and no key is accepted.
+
+`GLOBAL_OBLIGATION` projection cardinality is recorded as an open question for the first time, alongside `obligationId` provenance, and the two are recorded as entangled.
+
+`GLOBAL_OBLIGATION` remains unmaterializable.
+
+The closures established by Decisions 087, 088 and 089 are unchanged. This decision closes no Decision 086 configuration blocker.
+
+Blocker C and Blocker F remain open and continue to gate the work they name.
+
+## Future Review Trigger
+
+Reconsider when `obligationId` provenance and the projection cardinality are settled, since the canonical key depends on them and the contract's shape becomes stable then; when the canonical ordering key is adopted, since `globalObligations` would then join Decision 074's reproducibility-only list; when the numeric schema-version decision is taken, since the source removal is gated on it; or if a persistence layer or a stored Plan Snapshot is introduced before that decision, since the migration would then have data to act on.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
