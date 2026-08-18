@@ -8401,6 +8401,307 @@ Reconsider when the numeric schema transition is taken, since it depends on the 
 
 ---
 
+# Decision 095: The ResolvedRuleSet Schema-Version Transition for Rollover Provenance
+
+**Status:** Accepted
+**Related:** Decisions 023, 028, 056, 068, 071, 074, 078, 081, 082, 089, 090, 091, 092, 093, 094
+**Scope:** Architecture, Engineering, Data
+
+## Decision
+
+The `ResolvedRuleSet` contract carrying the `ResolvedRolloverPolicy` shape Decision 094 fixed is `schemaVersion` 3.
+
+The current contract is `schemaVersion` 2. This transition carries exactly one incompatible persisted change: on `ResolvedRolloverPolicy`, the required top-level `ruleVersionId` is removed and a required top-level `provenance` member is added, whose value takes one of two persisted shapes. `bucketId`, `policy` and `RolloverPolicyConfig` are unchanged, and every other `ResolvedRuleSet` member is unchanged.
+
+No numeric value other than 1, 2 and 3 is selected, reserved or implied.
+
+This decision applies Decision 074's versioning rule. It defines no migration behaviour, authorises no compatibility reader in either direction, authorises no validator and registers no error code, and it does not make any rule family materializable.
+
+## What schemaVersion versions
+
+`ResolvedRuleSet.schemaVersion` is the schema version of the persisted `ResolvedRuleSet` contract as a whole.
+
+PFOS-ENG-00 §40 lists an application version, a database schema version, a backup format version and a domain snapshot schema version, and records that these versions serve different purposes and must not be conflated. Applying that separation, exactly as Decision 092 did:
+
+- it is not the IndexedDB or database schema version governed by PFOS-ENG-00 §26 and Decision 056;
+- it is not the backup format version governed by PFOS-ENG-00 §27;
+- it is not the application version;
+- it is not the conceptual `PlanSnapshot.schemaVersion` of PFOS-ENG-01 §41, whose relationship to this version Decision 092 left undetermined and Decision 093 declined to assign.
+
+That relationship remains undetermined here.
+
+This is not "the rollover schema version". It versions the whole persisted contract. Rollover is simply the only nested contract that differs between version 2 and version 3.
+
+## The baseline is 2
+
+Decision 092 ratified 1 for the shipped seven-member `ResolvedGlobalObligation` shape and established 2 for the shape Decisions 090 and 091 decided.
+
+Source agrees: `RESOLVED_RULE_SET_SCHEMA_VERSION` is `2`, and a shipped test pins the literal 2 so the decided value stays under test while every producer names the constant.
+
+Decision 093 recorded that Decision 074 "requires another `ResolvedRuleSet` schema-version increment from the current `schemaVersion` 2" and deferred the numeric target. This decision supplies it.
+
+## Version mapping
+
+```text
+schemaVersion 2
+
+ResolvedRolloverPolicy {
+  bucketId       EntityId
+  ruleVersionId  EntityId
+  policy         RolloverPolicyConfig
+}
+```
+
+```text
+schemaVersion 3
+
+RolloverPolicyProvenance =
+  | { kind: 'AUTHORED'; ruleVersionId: RuleVersionId }
+  | { kind: 'PRODUCT_DEFAULT' }
+
+ResolvedRolloverPolicy {
+  bucketId    EntityId
+  provenance  RolloverPolicyProvenance
+  policy      RolloverPolicyConfig
+}
+```
+
+Under `schemaVersion` 2, `ruleVersionId` is typed bare `EntityId` in both Decision 074's declaration and in source. The `RuleVersionId` alias is adopted for this family for the first time at version 3, and nothing here should be read as implying it was already in place.
+
+`RolloverPolicyConfig` is unchanged between the two versions, including all five `policyType` arms and their fields. `bucketId` is unchanged. Every other member of `ResolvedRuleSet` is unchanged.
+
+## The one incompatible change
+
+Decision 094 states it precisely, and this decision versions exactly that: the required top-level `ruleVersionId` is removed, a required top-level `provenance` member is added, and `provenance` has two persisted variants.
+
+Every version-2 rollover entry lacks `provenance`; every version-3 entry lacks a top-level `ruleVersionId`. Neither document validates as the other, in either direction. That is what makes the change incompatible and what Decision 074's rule exists to make identifiable.
+
+## The alias is not the trigger
+
+The `EntityId` to `RuleVersionId` change inside the authored arm is not the incompatible change and is not an independent schema-version trigger.
+
+Decision 091 recorded the point for the equivalent change on `ResolvedGlobalObligation`, and Decision 092 carried it into the version mapping: adopting those aliases "is not itself an incompatible change, both being semantic aliases of `EntityId`" under Decision 078 on the terms Decision 074 fixed for `PlanVersionId`. Decision 094 applied the same reasoning to this family in advance.
+
+It changes no serialized shape and no compiler behaviour. It rides on the transition; it does not cause one.
+
+## Why the target is 3
+
+Decision 074 requires an increment for an incompatible persisted contract change. The question is which number the increment reaches, and it is answered from accepted practice rather than from arithmetic.
+
+Decision 092 is the corpus's only prior transition, and it moved 1 to 2 — the next integer. It also stated the reasoning that makes the next integer correct rather than merely conventional: the version exists so that a stored shape is identifiable, so a numbering scheme must never let one numeric value denote two different shapes. Decision 092 rejected renumbering the new shape to 1 on exactly that ground, describing it as "a renumbering rather than the increment Decision 074 requires".
+
+Decision 092 further recorded that "no numeric value other than `1` and `2` is selected, reserved or implied". Nothing therefore claims 3, reserves it, or stands between 2 and it.
+
+The member is numeric. Decision 092 rejected a non-numeric scheme because Decision 074 types the member `number` and the shipped contract tests enforce it. That remains true.
+
+Two is the current value, an increment is required, no number is reserved, no skip mechanism exists and no intermediate shape exists. The next increment is therefore 3.
+
+## No intermediate version exists
+
+No `schemaVersion` exists, conceptually or in any accepted source, between the current version 2 and the shape Decision 094 fixed.
+
+Decision 093 settled the provenance semantic and expressly declined to fix property names, discriminant spelling or type structure, so it produced no persisted shape to number. Decision 094 settled the persisted shape. There is no separately accepted intermediate persisted contract between them.
+
+Decision 092 confronted the same question about its own intermediate — `sequence` removed while `obligationId` was retained — and answered it: that shape "was never persisted and was never shipped… Assigning it a version would name a shape no datum ever held." The reasoning applies with more force here, where no intermediate shape exists even in principle.
+
+## No number is skipped
+
+Selecting 4 or any later value is rejected.
+
+No accepted source reserves a number or establishes a skipped-version mechanism. No unimplemented schema holds an assigned number. Version numbers identify actual persisted contract shapes, and assigning 3 to nothing while calling the new shape 4 would leave a numeric value naming no contract at all — the inverse of the defect Decision 092 refused, and equally destructive of the identification Decision 074's rule provides.
+
+## Rollover provenance travels alone
+
+This transition carries one change because one settled, unversioned incompatible change exists.
+
+`ResolvedGlobalObligation` needs nothing further: Decision 090's removal of `sequence` and Decision 091's rename of `obligationId` to `ruleId` were both carried by Decision 092's transition to version 2.
+
+`ResolvedGoalPolicy` has no settled target shape. Decision 093 left the `goalPolicies` population unresolved and recorded that it is not established that a product-default-sourced `ResolvedGoalPolicy` exists at all.
+
+`ResolvedFundingRule` does not change shape. Decision 093 held that required funding receives no product default, that the family cannot legitimately be produced by one, and that it remains authored-sourced.
+
+The two product defaults Decision 093 designated cause no contract change. `LEAVE_UNALLOCATED` was already an arm of `ResolvedLeftoverPolicy` and `NET_AMOUNT` already a member of `AllocationBasis` before Decision 093; designating which value the product default supplies is a resolution-behaviour holding, not a shape change. Decision 093 recorded exactly this: "The two defaults designated by this decision cause no contract change and carry no schema consequence of their own."
+
+The `sourceRuleVersionIds` alias typing is unresolved and outside scope. Decision 094 recorded it as a separate question spanning `ResolvedRuleSet` and the other resolved families, and it is not addressed here.
+
+The `GLOBAL_OBLIGATION` `RuleConfiguration` payload and the canonical ordering of `globalObligations` are unresolved. Decision 092 recorded that a later payload decision may reveal a separate incompatible change, and that whether a later canonical-ordering change requires an increment remains governed by Decision 074. Neither is settled, so neither is batched.
+
+No other accepted, settled incompatible `ResolvedRuleSet` change is waiting. Version 3 therefore carries rollover provenance alone.
+
+## Goal policy does not block this transition
+
+Waiting for the `goalPolicies` population to settle is rejected.
+
+Decision 093 forecloses it directly: `ResolvedGoalPolicy` and `ResolvedFundingRule` "do not change shape under this decision, and no transition batches several family changes together on the strength of it. Future goal-policy population work may create another incompatible change if it establishes default-sourced entries, and Decision 074 will govern it if so."
+
+Decision 093 also explained why acting early would be wrong in the other direction: applying a shape change to goal policy now "would version a contract against a case that may never arise and would prejudge the population answer." The same discipline forbids delaying a settled change for an unsettled one.
+
+Decision 092 rejected the structurally identical proposal — deferring until the canonical key or the `GLOBAL_OBLIGATION` payload settled — because "neither is needed to identify the two shapes being versioned, and Decision 074 governs any future incompatible change on its own terms."
+
+A transition versions settled shapes. Gating one on a question that may never produce a shape would defer it indefinitely. If a later population decision creates a default-sourced `ResolvedGoalPolicy`, Decision 074 will require its own increment then. No goal-policy design is performed here.
+
+## The repository as this decision finds it
+
+The following is a finding about the repository at the time of this decision, not a claim about the future:
+
+- the `ResolvedRuleSet` source contract exists;
+- tests construct `ResolvedRuleSet` and `ResolvedRolloverPolicy` values;
+- no `PlanSnapshot` type and no Plan Snapshot producer exist in source;
+- no persistence repository, database, IndexedDB or local-storage implementation exists — `src/infrastructure`, `src/application` and `src/presentation` contain no implementation;
+- no persisted `schemaVersion`-2 `ResolvedRuleSet` user data exists;
+- no migration machinery and no compatibility reader exist.
+
+That constructing a value in a test is not the same as persisting one is the distinction this section turns on, and it is stated so that a later reader does not infer stored data from the existence of a contract or a fixture.
+
+## What this decision does about migration
+
+Decision 074 requires the incompatible contract change to receive a schema-version increment. This decision satisfies that requirement by moving the decided `ResolvedRuleSet` contract from `schemaVersion` 2 to `schemaVersion` 3.
+
+No current data-transformation migration is required, because no persisted `schemaVersion`-2 `ResolvedRuleSet` data exists to transform. That is the whole of the finding, and it is contingent on the repository state recorded above rather than on any general principle.
+
+This is not an exception to Decision 074's versioning rule, and no pre-persistence exception is created, on the ground Decision 090 gave and Decisions 091, 092, 093 and 094 each preserved.
+
+No general rule is established that a schema-version transition never requires a data migration, and no general data-migration requirement is attributed to Decision 074. Decision 074 requires an increment; what else a transition may require is not settled by Decision 074 and is not settled here.
+
+PFOS-ENG-00 §26's migration rules are neither invoked nor extended. §26 states that every schema change requires a migration, but it is titled IndexedDB Schema Versioning and governs the database schema version, which §40 keeps as a separate version class from this one. Importing its requirement here would be the conflation §40 forbids. Nothing in this decision limits §26 within its own domain.
+
+Future migration architecture, read-migration and migration-engine design remain undefined.
+
+## Forward and backward compatibility are undefined
+
+No accepted source specifies how a reader of one version should behave when presented with another, in either direction.
+
+A version-2 reader encountering version 3, a version-3 reader encountering version 2, read-migration, dual-version support, import compatibility, rejection behaviour and unsupported-schema handling are all recorded as undefined and deferred. No validator, no error code and no compatibility mechanism is created or authorised, under Decision 073's convention that a code is named once the behaviour it reports is specified.
+
+## The first Plan Snapshot persisted after this transition
+
+No persisted `schemaVersion`-2 `ResolvedRuleSet` data exists today.
+
+Once the implementation authorised below becomes the current PFOS producer of resolved rule sets, a Plan Snapshot produced and persisted by that implementation should embed a `ResolvedRuleSet` carrying `schemaVersion` 3.
+
+Four guards attach to that statement.
+
+It says nothing about `PlanSnapshot.schemaVersion`. It does not equate any Plan Snapshot version with `ResolvedRuleSet.schemaVersion`, and it assigns the conceptual `PlanSnapshot.schemaVersion` no semantics; that relationship remains undetermined where Decisions 092 and 093 left it.
+
+It does not claim that snapshot persistence exists. No Plan Snapshot type, producer or persistence layer exists in source today, and the statement is conditional on an implementation that has not been performed.
+
+It makes no claim that `schemaVersion`-2 data can never exist under some future accepted compatibility, import or history mechanism. Those mechanisms are undecided, and none is created here.
+
+And it does not declare Decision 092's analogous statement erroneous. Decision 092 said that a Plan Snapshot produced and persisted by the current PFOS producer should carry a `schemaVersion` 2 `ResolvedRuleSet`. That was correct for the producer its own transition established. This decision updates what the current producer should emit once the version-3 implementation replaces it. Decision 092's sentence described the producer of its moment; this one describes the producer after this transition.
+
+## Decision 074 is applied, not changed
+
+This decision applies Decision 074. It does not supersede, amend, narrow or except it. Decision 074's Status remains Accepted and its schema-version rule stands exactly as Decisions 089, 090, 091, 092, 093 and 094 each preserved it.
+
+Decisions 093 and 094 remain the decisions that changed the contract. Decision 093 established the semantic and the existence of the incompatible change; Decision 094 fixed the shape. This decision assigns a schema version to that already-decided shape and changes no member itself.
+
+No exhaustive taxonomy of which future semantic, serialization, ordering or structural changes require an increment is defined. Decision 074 continues to govern future incompatible persisted-contract changes on its own terms.
+
+## Decisions 093 and 094 are applied, not reopened
+
+Decision 094's spelling is applied exactly and is not reconsidered: the nested provenance member, the `provenance.kind` discriminant, the `AUTHORED` and `PRODUCT_DEFAULT` literals, the `RuleVersionId` typing of the authored identifier, the discriminant-only product-default arm, the absence of `ruleId`, the `RolloverPolicyProvenance` name and its rollover locality, and the independence of `policy` from `provenance`.
+
+Decision 093 is unchanged: the `LEAVE_UNALLOCATED` and `NET_AMOUNT` product defaults, the holding that required funding is authored-only, the deferral of the `goalPolicies` population, and the separation of Blocker F all stand.
+
+## Authorised implementation
+
+A later bounded implementation unit is authorised to:
+
+- add `RolloverPolicyProvenance` exactly as Decision 094 specifies;
+- replace the top-level `ResolvedRolloverPolicy.ruleVersionId` with the required `provenance` member;
+- type the authored arm's identifier `RuleVersionId`;
+- leave `bucketId` unchanged;
+- leave `policy` and `RolloverPolicyConfig` unchanged;
+- add no `ruleId`;
+- change `RESOLVED_RULE_SET_SCHEMA_VERSION` from `2` to `3`;
+- update `ResolvedRuleSet` fixtures and tests from 2 to 3, including the pinning test;
+- update the rollover fixtures in `resolved-rollover-policy.test.ts` and `resolved-rule-set.test.ts` to the Decision 094 shape;
+- add test coverage of both the `AUTHORED` and `PRODUCT_DEFAULT` provenance states;
+- add compile-time protection that a `PRODUCT_DEFAULT` arm carries no `ruleVersionId` and that an `AUTHORED` arm requires one;
+- add compile-time protection that the retired top-level `ruleVersionId` is absent;
+- preserve the existing readonly and immutability protections, retargeting any `@ts-expect-error` that currently uses the retired member;
+- update only directly stale comments and documentation in the touched contract and test files where necessary to reflect Decisions 094 and 095.
+
+Nothing else. In particular this decision authorises no persistence system, no migration engine, no old-version reader, no new-version compatibility layer, no backward-reader behaviour, no forward-reader behaviour, no import compatibility, no unsupported-schema validator, no error code, no goal-policy change, no funding-provenance change, no `sourceRuleVersionIds` alias change, no product-default identity or versioning, no canonical ordering key, no `GLOBAL_OBLIGATION` `RuleConfiguration`, no resolver population, no evaluation-context population, no Blocker C work, no Blocker F work, and no Milestone 3 behaviour.
+
+## The source state before and after
+
+Before the authorised implementation, source carries `RESOLVED_RULE_SET_SCHEMA_VERSION = 2` and the version-2 `ResolvedRolloverPolicy` shape. The decided contract and the source contract differ, and will differ until the implementation is taken. That gap is deliberate: Decisions 090, 091, 093 and 094 each recorded the same state, and Decision 092 closed its own gap only through a separately authorised implementation.
+
+After the authorised implementation, source carries `RESOLVED_RULE_SET_SCHEMA_VERSION = 3` and the Decision 094 rollover shape.
+
+No mixed state is authorised as a permanent contract. Shipping the Decision 094 rollover shape while the constant still reads 2 would make one numeric value denote two different shapes, which is the defect the versioning rule exists to prevent. Shipping the constant as 3 while the old rollover shape remains would name a shape that is not the decided one. The two changes belong to one implementation unit.
+
+## What this decision closes
+
+Decision 093's deferred numeric schema-version target.
+
+Decision 094's remaining prerequisite, being the numeric transition its target shape was waiting for.
+
+The version gate preventing implementation of the rollover provenance change, within the bounded authorisation above.
+
+## What this decision does not close
+
+Migration architecture beyond the current no-data-transformation finding. Forward and backward compatibility, read-migration, dual-version support, import compatibility, rejection behaviour and unsupported-version handling, and any error code for them. `PlanSnapshot` schema-version semantics and its relationship to this version. Product-default identity and versioning. The `goalPolicies` population and `ResolvedGoalPolicy`'s persisted shape. `ResolvedFundingRule`'s provenance beyond its authored-sourced holding. The `sourceRuleVersionIds` alias typing and the equivalent typing on the other resolved families. The definition of "allocatable bucket" and the required-funding completeness predicate. The `GOAL_POLICY` and `GOAL_UNTIL_TARGET` duplication. The `GLOBAL_OBLIGATION` `RuleConfiguration` payload. The canonical ordering key for `globalObligations`. The `LOWER_PRIORITY_POOL` `FIXED_AMOUNTS` authored sequence. The `RuleConfiguration` union, `ConfiguredRuleVersion`, the full `RuleVersion` contract and its §41 metadata. The contract pairing a `Rule` with its versions. Evaluation-context API and population. Explanation multiplicity. Blocker F. The `resolvedRuleSetId` determinism question. The identifier-ordering documentation wording. Any universal taxonomy of future schema-changing events. All Milestone 3 behaviour.
+
+## Unchanged by this decision
+
+Every `ResolvedRuleSet` member other than the element shape of `rolloverPolicies`, and the `schemaVersion` member's own type and meaning. `RolloverPolicyConfig` in full. `bucketId`. `sourceRuleVersionIds`. Plan Snapshot design. Decisions 023, 028, 056, 068, 071, 074, 078, 081, 082, 089, 090, 091, 092, 093 and 094 are unamended.
+
+## Why
+
+Decision 093 discovered that an already-accepted product default could not be truthfully represented by the accepted contract, and recorded the schema consequence while deferring the number. Decision 094 fixed the target shape and confirmed it stable. A settled incompatible shape with no assigned version is a contract that cannot be identified once anything stores it, which is the precise failure Decision 074's rule exists to prevent. This decision supplies the number, and nothing else.
+
+## Alternatives Considered
+
+Keeping `schemaVersion` 2 for the new shape was rejected. Decision 074 requires an increment, and one numeric value would denote two different rollover shapes across the repository's own history, defeating the identification the rule provides.
+
+Skipping to 4 or a later value was rejected. No number is reserved, no skipped-version mechanism exists, and version numbers identify actual persisted shapes; a gap would name no contract.
+
+Assigning an intermediate version to Decision 093's semantics alone was rejected. Decision 093 fixed no persisted shape, so there is no contract to number, and Decision 092 already refused to version a shape no datum ever held.
+
+Delaying until the `goalPolicies` population settles was rejected on Decision 093's no-batching holding and Decision 092's parallel refusal to wait for the canonical key or the payload.
+
+Batching hypothetical future changes was rejected. A transition versions settled shapes; nothing else has one.
+
+Assigning 3 while retaining the old rollover source shape was rejected: the new number would denote the old contract.
+
+Shipping the Decision 094 shape while retaining `schemaVersion` 2 was rejected on the same ground in reverse, and it is the state the version gate exists to prevent.
+
+Defining migration architecture now was rejected. Nothing is persisted, so there is nothing to transform, and inventing an architecture would decide a question no accepted source reaches.
+
+Adding dual-version or compatibility readers now was rejected. No reader exists, and both directions remain undefined where Decision 092 left them.
+
+Splitting the number into a separate later decision from this one was rejected: this decision has no other subject, and the shape it versions is already settled.
+
+## Tradeoffs
+
+`schemaVersion` 2 names a source contract shape that was shipped but was never persisted by the repository as it exists today. The same will briefly be true of 3.
+
+Forward and backward compatibility remain undefined, so the first reader implementation will arrive without an accepted rule for encountering an unexpected version. That is recorded rather than resolved, because no accepted source supplies one and no reader exists.
+
+The relationship between this version and the conceptual `PlanSnapshot` schema version is left open for a second transition running, so a future persistence design must settle it rather than inherit it.
+
+The implementation authorised here changes a contract that nothing yet consumes, so the change is verifiable only by contract tests until a resolver exists.
+
+## Consequences
+
+`ResolvedRuleSet.schemaVersion` has a ratified baseline of 1, a decided value of 2 for the Decision 090 and 091 shape, and a decided value of 3 for the Decision 094 rollover shape.
+
+One nested contract differs between versions 2 and 3: `ResolvedRolloverPolicy`.
+
+The implementation gate on the rollover provenance change is lifted, within the bounded authorisation above, and Milestone 2 gains its first implementable consequence from the Decision 093 line of work.
+
+No persistence implementation, current data-transformation migration, or compatibility-reader implementation is authorised.
+
+No runtime validation is authorised.
+
+## Future Review Trigger
+
+Reconsider when a persistence layer or a stored Plan Snapshot is introduced, since forward compatibility, backward compatibility and migration architecture become live then, and the relationship to the conceptual `PlanSnapshot` schema version must be settled with them; when the `goalPolicies` population is settled, since default-sourced goal-policy entries would create another incompatible change governed by Decision 074; if any future accepted decision introduces a product default for required funding, since that family's provenance would then need revisiting; when the `GLOBAL_OBLIGATION` payload decision is taken, since Decision 092 recorded that it may reveal a separate incompatible change; when a canonical ordering key for `globalObligations` is adopted, since whether it requires a further increment is governed by Decision 074 and is not decided here; or if any other incompatible persisted-contract change is decided, since Decision 074 requires it to be versioned.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
