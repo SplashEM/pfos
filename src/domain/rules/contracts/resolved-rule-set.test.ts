@@ -85,7 +85,7 @@ const LEFTOVER: ResolvedLeftoverPolicy = { policyType: 'LEAVE_UNALLOCATED' };
 
 const ROLLOVER: ResolvedRolloverPolicy = {
   bucketId: asEntityId('bucket-5'),
-  ruleVersionId: asEntityId('rule-version-5'),
+  provenance: { kind: 'AUTHORED', ruleVersionId: asEntityId('rule-version-5') },
   policy: { policyType: 'CARRY_ALL' },
 };
 
@@ -171,12 +171,14 @@ const REQUIRED_FIELDS: readonly string[] = [
 /*
  * Decision 092 ratified the baseline of 1 for the shape that carried
  * obligationId and sequence, and established 2 for the shape Decisions 090 and
- * 091 decided. Pinning the literal here keeps the decided value under test while
+ * 091 decided. Decision 095 establishes 3 for the shape Decisions 093 and 094
+ * decided, whose one incompatible change is the rollover provenance member
+ * below. Pinning the literal here keeps the decided value under test while
  * every producer below names the constant.
  */
 describe('RESOLVED_RULE_SET_SCHEMA_VERSION', () => {
-  it('is the version Decision 092 established', () => {
-    expect(RESOLVED_RULE_SET_SCHEMA_VERSION).toBe(2);
+  it('is the version Decision 095 established', () => {
+    expect(RESOLVED_RULE_SET_SCHEMA_VERSION).toBe(3);
   });
 });
 
