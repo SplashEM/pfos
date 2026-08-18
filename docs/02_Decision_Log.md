@@ -8074,6 +8074,333 @@ Reconsider when the `goalPolicies` population is settled, since default-sourced 
 
 ---
 
+# Decision 094: The Persisted Provenance Spelling for ResolvedRolloverPolicy
+
+**Status:** Accepted
+**Related:** Decisions 023, 028, 068, 073, 074, 078, 080, 081, 082, 083, 085, 086, 088, 090, 091, 092, 093
+**Scope:** Architecture, Engineering, Data
+
+## Decision
+
+`ResolvedRolloverPolicy` carries a required `provenance` member whose value is a two-arm discriminated union, discriminated on `kind`:
+
+- `AUTHORED`, carrying exactly one `ruleVersionId` typed `RuleVersionId`;
+- `PRODUCT_DEFAULT`, carrying its discriminant and nothing else.
+
+The required top-level `ruleVersionId` is removed. `bucketId` and `policy` are unchanged, and `RolloverPolicyConfig` is unchanged in every respect.
+
+The provenance type is named `RolloverPolicyProvenance` and is local to the rollover contract.
+
+No `ruleId` is added to this family, and that question is closed here rather than deferred.
+
+This decision fixes contract spelling. It selects no numeric `ResolvedRuleSet` schema version, defines no migration, authorises no compatibility reader, authorises no validator or error code, and authorises no source change.
+
+## What this decision is
+
+Decision 093 settled the semantics of default-sourced provenance and recorded, in terms, that it "does not fix property names, discriminant spelling or type structure; those belong with the contract and schema work described below." This is the contract half of that work.
+
+Decision 093 applied the persisted consequence to `ResolvedRolloverPolicy` alone, because Decision 028, PFOS-ENG-01 §17.1 and Decision 080 already establish `CARRY_ALL` as its product default, and Decision 081 records that most buckets author no rollover rule. The antecedent of the general rule is satisfied for this family today and for no other. This decision changes that scope in neither direction.
+
+The schema half — the numeric target — is not taken here. It is a separate decision, for the reason given below.
+
+This decision makes no financial holding. It decides how a resolved rollover entry records where its value came from, and it decides nothing about what any rollover value is, when it applies, or which policy a product default may supply. Its scope is recorded as Architecture, Engineering and Data for that reason.
+
+## The current shape
+
+The shipped contract, identical to the shape Decision 074 declared:
+
+```ts
+export interface ResolvedRolloverPolicy {
+  readonly bucketId: EntityId;
+  readonly ruleVersionId: EntityId;
+  readonly policy: RolloverPolicyConfig;
+}
+```
+
+`ruleVersionId` is typed `EntityId`, not `RuleVersionId`, in both Decision 074's declaration and in source. Nothing in this decision should be read as implying the alias was already adopted for this family. `ResolvedGlobalObligation` adopted `RuleId` and `RuleVersionId` under Decisions 091 and 092; `ResolvedRolloverPolicy`, `ResolvedGoalPolicy` and `ResolvedFundingRule` did not, and still carry bare `EntityId`.
+
+## The target contract
+
+```ts
+export type RolloverPolicyProvenance =
+  | {
+      readonly kind: 'AUTHORED';
+      readonly ruleVersionId: RuleVersionId;
+    }
+  | {
+      readonly kind: 'PRODUCT_DEFAULT';
+    };
+
+export interface ResolvedRolloverPolicy {
+  readonly bucketId: EntityId;
+  readonly provenance: RolloverPolicyProvenance;
+  readonly policy: RolloverPolicyConfig;
+}
+```
+
+The member names, the discriminant property, the two literals, the arm contents and the type names above are fixed by this decision. Their implementation is not authorised.
+
+## Three questions, three members
+
+The resolved entry answers three questions, and each member answers exactly one:
+
+```text
+bucketId     which bucket
+policy       what rollover behaviour applies
+provenance   where that resolved value came from
+```
+
+`policy` and `provenance` are independent dimensions. Nothing in accepted authority ties a provenance state to a policy variant, and the shipped contract already treats provenance as uniform across all five policy arms by carrying it once on the envelope.
+
+That independence is the architectural reason to compose the two dimensions rather than multiply them. Multiplying five policy variants by two provenance states would produce ten arms restating `bucketId` and every policy field, and would dissolve `RolloverPolicyConfig` — a type Decision 074 declared and which this decision preserves — into the envelope. Composition expresses two independent questions with two independent discriminated values; multiplication expresses one question that does not exist.
+
+## Why provenance is nested
+
+`provenance` is a nested discriminated value rather than a discriminator and an optional identifier laid flat beside `bucketId` and `policy`.
+
+The grounds are these.
+
+Provenance is a semantic dimension of its own, and nesting gives that dimension one addressable value carrying its own discriminant. A reader of the contract, of persisted JSON, or of an eventual import validator finds the whole provenance answer in one place rather than assembled from two members at different depths.
+
+It keeps `ResolvedRolloverPolicy` an interface envelope. Every resolved *entry* in the corpus is an interface holding nested discriminated unions — `ResolvedRolloverPolicy`, `ResolvedFundingRule`, `ResolvedGlobalObligation`, `ResolvedGoalPolicy` — while top-level unions are reserved for *plans and policies*: `ResolvedLeftoverPolicy`, `ResolvedPoolPlan`, `ResolvedTopPriorityPlan`, `RuleOwner`, `RolloverPolicyConfig`. Flattening would make rollover the only resolved entry that is itself a union, for no gain in expressiveness.
+
+It avoids restating `bucketId` and `policy` once per provenance arm.
+
+And it keeps the two discriminants apart. A flat arrangement places `sourceKind` and `policy.policyType` in one object at different depths, with nothing in the shape indicating that they answer unrelated questions. Nesting states the separation structurally.
+
+A further engineering observation supports the same conclusion and is recorded under Alternatives Considered. It is corroboration, not ground: this decision does not rest a persisted contract on the behaviour of one compiler's excess-property checking.
+
+## The discriminant property is kind
+
+The property path is `provenance.kind`.
+
+Decision 093 speaks of the "provenance kind" twice, once for each state, so the path spells the concept in the words the accepted decision already used.
+
+`kind` does not collide with the accepted family discriminants. Decision 086 fixed that each family's inner discriminant from Decision 074 keeps its accepted name and meaning, so `type`, `policyType` and `strategy` are spoken for, and each names financial behaviour rather than provenance. The only existing `kind` in source is `TerminatingRuleVersion.kind`, the discriminant of a future `RuleVersion` union; it sits on a different object in a different contract and no ambiguity arises between them.
+
+The alternatives were considered and rejected. `sourceKind` is redundant inside a member already named `provenance`, and "source" is additionally spoken for by `sourceRuleVersionIds`, which means something else. `provenanceKind` stutters as `provenance.provenanceKind`. `type` is the most generic name available and sits nearest the financial-behaviour discriminants. `ownerType` names rule ownership, which a product default does not have — `rule-owner.test.ts` already guards against exactly that confusion by asserting that `ownerType: 'PRODUCT_DEFAULT'` does not compile, on Decision 081's ground that §6 level 9 is a resolver fallback rather than a fifth owner.
+
+## The discriminant literals are AUTHORED and PRODUCT_DEFAULT
+
+The persisted literals are exactly `'AUTHORED'` and `'PRODUCT_DEFAULT'`.
+
+Both are the corpus's own words. Decision 093 states the semantic as authored provenance against product-default provenance throughout. PFOS-ENG-01 §8.1 is headed "Product Default". "Authored" is the corpus's standing term for user-supplied configuration, carried by Decision 082's and Decision 084's authored scope and by the registered `RULE_DUPLICATE_AUTHORED_SCOPE` code. `PRODUCT_DEFAULT` already exists as a string in the repository, in the negative test that keeps it out of `RuleOwner`; using it for the concept it actually names, in the contract where that concept belongs, is Decision 091's principle of keeping one vocabulary rather than two.
+
+SCREAMING_SNAKE matches every discriminant literal in the codebase without exception.
+
+`SYSTEM`, `BUILT_IN`, `INHERITED`, `DEFAULT_RULE`, `IMPLICIT_RULE` and `FALLBACK_RULE` are rejected. The first three appear nowhere in accepted authority, and `INHERITED` additionally implies a precedence relationship that Decision 080's fallback mechanism does not create. The last three embed *rule*, contradicting Decision 081's holding — reaffirmed by Decision 093 — that a product default is not an authored `Rule`, has no `RuleId`, no `RuleVersionId`, no lifecycle status and no authored scope. No literal naming a product default may call it a rule.
+
+## The AUTHORED arm
+
+The authored arm carries its discriminant and exactly one identifier:
+
+```ts
+{ readonly kind: 'AUTHORED'; readonly ruleVersionId: RuleVersionId }
+```
+
+This is Decision 093's invariant in source form: authored provenance carries exactly one genuine `RuleVersionId`, being the exact version that produced the value, which PFOS-ENG-01 §19.1 requires to remain reconstructable for a version used in a confirmed allocation.
+
+No other provenance metadata joins it.
+
+## No ruleId is carried, and the question is closed
+
+`ResolvedRolloverPolicy` does not carry `ruleId`. No accepted source has addressed this for the rollover family, and this decision closes it rather than leaving it to surface later.
+
+Decision 091 gave `ResolvedGlobalObligation` both identities, and stated the reason that confines the holding: `GLOBAL_OBLIGATION` "is the only executable resolved family with no natural key: every other is keyed by `bucketId`." Rollover is keyed by `bucketId`. Decision 074 independently orders `rolloverPolicies` by bucket identifier. The condition that made a second identity necessary for obligations is absent here.
+
+Adding `ruleId` would therefore add a second independently supplied identity that can disagree with `ruleVersionId`, with no contract pairing a `Rule` to its versions to check them — an absence Decisions 085, 086 and 091 each recorded. Decision 086 accepted such a redundancy once, and named the test it must pass: the value must not be derivable, and it must be needed. Decision 091 showed obligations passing that test. Rollover does not reach it, because no accepted source demonstrates a need for stable logical `Rule` identity in a resolved rollover entry at all.
+
+Two things this holding does not say. It does not say `bucketId` and `ruleId` are semantically interchangeable — they are different concepts answering different questions, and `bucketId` addresses the entry rather than identifying the rule that produced it. And it does not say rollover could never need `ruleId`. The holding is only that no accepted need exists today, so none is persisted today. If a future requirement demonstrates one — a §19.3-style report naming which rule changed, for instance — that is a separate contract decision governed by Decision 074's versioning rule, and the second identity would arrive with the argument that justifies it.
+
+## The PRODUCT_DEFAULT arm carries its discriminant and nothing else
+
+```ts
+{ readonly kind: 'PRODUCT_DEFAULT' }
+```
+
+Decision 093 fixes the invariant: product-default provenance carries no `RuleVersionId`, no sentinel, no fabricated identifier, and no manufactured implicit `Rule` or `RuleVersion`.
+
+This decision adds nothing beside it. Not `ruleId`, `ruleVersionId`, `ProductDefaultId` or `ProductDefaultVersionId`; not `createdAt`, `effectiveFrom`, `versionNumber`, `applicationVersion` or `schemaVersion`; not a lifecycle status, an authored scope, an owner or a precedence level. Decision 093 enumerated most of these and refused each, on Decision 081's ground that a product default has none of the fields PFOS-ENG-01 §18 requires of a permanent rule and no effective period under Decision 078.
+
+Decision 093 deliberately left the identity of a product-default *definition* unresolved, recording that a future audit requirement might need to identify the exact product release or default definition that supplied a value, that the question is open, and that it must not be solved with a fabricated default version identifier. This decision does not solve it. A discriminant-only arm is what leaves it genuinely open: it commits to no identity scheme, so any future scheme remains available on its own merits.
+
+A discriminant-only arm is also the established local shape. `RolloverPolicyConfig`'s own `CARRY_ALL` and `RESET` carry nothing but their discriminator, with a shipped test asserting it by key inspection, and `RuleOwner`'s `GLOBAL` carries only `ownerType`.
+
+## The type is rollover-local
+
+The provenance union is named `RolloverPolicyProvenance` and lives in the rollover contract. No shared `ResolvedRuleProvenance` is introduced.
+
+Decision 093 states a general semantic and applies the persisted consequence to one family. `ResolvedFundingRule` is expressly out of scope, because required funding receives no product default. `ResolvedGoalPolicy` is expressly deferred, because it is not established that a default-sourced goal policy exists at all. One concrete adopter is not evidence for a shared persisted contract.
+
+Decision 086 refused to declare a `RuleVersionKind` even with both arms conceptually settled, recording that a named closed vocabulary is unnecessary before the union exists and that declaring one would close a vocabulary the decision had no authority to close. The same restraint applies with more force here, where the second adopter is not merely undefined but explicitly undetermined.
+
+Deferring costs nothing later. If a second family legitimately adopts the semantic and its needs match, the type can be moved and renamed with no change to persisted JSON, provided `kind` and the two literals are preserved. That property is what makes the local choice safe rather than merely cautious.
+
+## Type structure follows repository convention
+
+The convention in `src/domain/rules/contracts` is uniform: discriminated unions are exported `type` aliases with inline object arms, and records are `interface` declarations. `RuleOwner`, `ResolvedLeftoverPolicy`, `RolloverPolicyConfig`, `ResolvedPoolPlan` and `ResolvedTopPriorityPlan` are all type aliases with inline arms; no named-interface-per-arm pattern exists anywhere in the Rule Engine contracts.
+
+So `RolloverPolicyProvenance` is a type alias with two inline arms, and `ResolvedRolloverPolicy` remains an interface. The envelope is not converted to a top-level union.
+
+## What the contract makes unrepresentable, and what it does not
+
+Decision 093 requires that an entry carrying both a product-default state and a `RuleVersionId`, or neither, be unrepresentable rather than merely invalid. The target shape satisfies that at the level of the contract: no arm of `RolloverPolicyProvenance` admits either combination, so neither state is describable in the decided contract.
+
+For ordinary typed construction — the object literals through which every value in this codebase is built — TypeScript enforces it. A `PRODUCT_DEFAULT` arm carrying `ruleVersionId` is rejected as an excess property; an `AUTHORED` arm missing `ruleVersionId` is rejected as a missing required member; a third discriminant literal is rejected; a bare string is rejected by the `EntityId` brand; and every member is `readonly`, so mutation is rejected.
+
+The limit is stated plainly rather than left implicit. TypeScript's structural typing does not guarantee that an arbitrary widened intermediate object cannot carry an extra member past an assignment, and no static type validates untrusted persisted or imported JSON at all. PFOS-ENG-00 §29.1 treats imported content as untrusted, and a type is not a parser. This is not a weakness peculiar to the shape chosen here — the same limit applies to `RuleOwner`'s exclusion of `ownerId` from `GLOBAL`, and to every discriminated union the corpus has accepted — and the alternatives considered below share it exactly. Closing it is runtime validation at a trust boundary, which belongs to the persistence and import authority and is not this decision's job.
+
+Nothing here should be read as claiming the type alone validates persisted JSON.
+
+## Consequences for future tests
+
+No test is authorised by this decision. The following are recorded so that the eventual implementation authorisation inherits a described intent rather than inventing one.
+
+The compile-time guards the target shape makes available, in the shipped `COMPILE_TIME_ONLY` idiom under which an unused `@ts-expect-error` fails the build:
+
+- a `PRODUCT_DEFAULT` arm carrying `ruleVersionId` is rejected;
+- an `AUTHORED` arm missing `ruleVersionId` is rejected;
+- a raw string is rejected where a branded identifier is required;
+- an unaccepted provenance `kind` is rejected;
+- `provenance` and its members are immutable;
+- a top-level `ruleVersionId` on the envelope is rejected, guarding this decision's retirement of that member as Decisions 090 and 091 guarded theirs.
+
+Two cautions belong with them.
+
+The raw-string guard establishes that a bare string is not accepted. It does not, and cannot, establish that `RuleVersionId` differs from any other `EntityId`. `rule-identifiers.ts` records that these are semantic aliases rather than second brands, and that the distinction is preserved "through field names, construction paths, documentation and tests rather than through the compiler." No test may claim otherwise.
+
+Each `@ts-expect-error` asserts only that some diagnostic occurs on the line it guards, not which one. Each must therefore be constructed so that the intended diagnostic is the only one available — built from a known-good fixture with exactly one defect introduced, and attached to the offending member rather than to an enclosing call, as the shipped resolved-contract tests already do.
+
+## No runtime validation is authorised
+
+No validator, no validator API, no error code, no import parser and no persistence reader is authorised, defined or named by this decision.
+
+Decision 093 authorised none, and Decision 073's convention holds that a code is named once the behaviour it reports is specified. Validation of untrusted persisted and imported input remains a future boundary question under the persistence and import authority, which no accepted decision has yet established.
+
+## sourceRuleVersionIds is unchanged
+
+`ResolvedRuleSet.sourceRuleVersionIds` is untouched.
+
+A product-default rollover entry contributes no identifier to it. No sentinel, no product-default identifier and no other non-rule-version value is inserted, and the field is not repurposed to carry provenance. Decision 093 settled this and Decision 074 is not amended.
+
+The field's own type spelling — it is declared `readonly EntityId[]` while Decision 093 describes its contents as `RuleVersionId` values — is a separate question spanning `ResolvedRuleSet` and the other resolved families. It is not addressed here.
+
+## The exact incompatible change
+
+```text
+schemaVersion 2 (current)
+
+ResolvedRolloverPolicy {
+  bucketId
+  ruleVersionId
+  policy
+}
+```
+
+```text
+target shape
+
+ResolvedRolloverPolicy {
+  bucketId
+  provenance
+  policy
+}
+```
+
+The incompatible persisted change is precisely this: the required top-level `ruleVersionId` is removed, and a required top-level `provenance` member is added, whose value takes one of two persisted shapes. `bucketId` and `policy` are unchanged, including all five `policyType` arms and their fields.
+
+The `EntityId` to `RuleVersionId` change inside the authored arm is not part of it. Decision 092 records the point directly for the equivalent change on `ResolvedGlobalObligation`: adopting those aliases "is not itself an incompatible change, both being semantic aliases of `EntityId`." It changes no serialized shape and no compiler behaviour. It is a semantic spelling improvement carried on a member this decision is rewriting in any case, and it is recorded here so that it is not later mistaken for part of the incompatible change.
+
+## Schema consequence
+
+Decision 093 established that this change requires another `ResolvedRuleSet` schema-version increment from the current `schemaVersion` 2, and deferred the numeric target.
+
+This decision confirms that the rollover target shape is now stable and fully specified: the member set, the discriminant property, both literals, both arm contents, the identifier type and the disposition of `ruleId` are all fixed above, and no open question about this family's resolved shape remains.
+
+It selects no numeric value. It does not name the next version number. It defines no migration behaviour, authorises no compatibility reader in either direction, and assigns no semantics to the conceptual `PlanSnapshot` schema version, whose relationship to `ResolvedRuleSet.schemaVersion` Decision 092 left undetermined. Those remain exactly where Decisions 092 and 093 left them.
+
+Decision 074's versioning rule is applied, not amended, narrowed or excepted, and no pre-persistence exception is created.
+
+## Why the numeric transition is a separate decision
+
+Decision 093 deferred the contract spelling and the numeric target as two distinct items, and this decision discharges the first only.
+
+The numeric transition should version a stable target shape rather than a shape still under design; that is why it follows rather than precedes this decision. Decision 092 is the precedent for the sequencing and for the form: it took the numeric transition after Decisions 090 and 091 had settled the shapes, ratified the baseline, and carried two settled changes in one increment.
+
+Whether the eventual numeric decision carries this change alone or batches it with another family's settled change is left to that decision. Decision 093 recorded that no transition batches several family changes together on the strength of it, and nothing here changes that.
+
+## No product-default policy coupling is created
+
+This decision does not encode, at the type level or otherwise, that `PRODUCT_DEFAULT` provenance may accompany only `CARRY_ALL`.
+
+`CARRY_ALL` is today's accepted product default under Decision 028, PFOS-ENG-01 §17.1 and Decision 080. That is a statement about which value the default currently supplies. The provenance contract records where a resolved value came from; it does not constrain which policy values a future accepted default may use.
+
+Encoding the coupling would create a new financial invariant as a side effect of a spelling decision, closing a design space no accepted source closed. Decision 068 forbids making an architectural commitment as a side effect of another decision, and Decision 093 declined to make any holding of this kind. All combinations of the five policy variants with the two provenance states therefore remain expressible in the contract, and which of them a resolver may legitimately produce is a resolver question that no accepted decision has reached.
+
+## No implementation is authorised
+
+No source change is authorised by this decision. Not to `resolved-rollover-policy.ts`, not to `resolved-rule-set.ts`, not to `RESOLVED_RULE_SET_SCHEMA_VERSION`, not to any test or fixture, and not to any persistence, migration or resolver code, none of which exists.
+
+After this decision, `ResolvedRolloverPolicy` in source still carries the required top-level `ruleVersionId` typed `EntityId`, and `RolloverPolicyProvenance` does not exist. The decided contract and the source contract differ, and will differ until a transition is taken. That is the state Decision 093 recorded and it is unchanged here.
+
+Implementation remains gated on three things in order: this decision being accepted; the numeric schema transition being accepted; and an explicit bounded implementation authorisation taken after both. Decision 093 described the eventual work — the provenance states on `ResolvedRolloverPolicy` alone, the schema version the numeric decision selects, and the rollover fixtures and tests — precisely so that its shape is not settled by whichever implementation lands first. That description stands, now with the contract spelling fixed.
+
+## Alternatives considered
+
+**Making `ruleVersionId` optional.** Rejected, and rejected twice over. Decision 093 rejected it semantically: absence alone is never overloaded to mean product-default provenance, because PFOS-ENG-00 §29.1 treats imported content as untrusted and a truncated record would be indistinguishable from a deliberate product-default entry, which reading it as one would turn into a silent financial decision under Constitution Principle 4. Decision 086 rejected the same structural device generally, holding that discriminating by which payload key is present is the loosely structured object PFOS-ENG-01 §47.8 forbids. Decision 081 contemplated this path when it recorded the gap; Decision 093 closed it. The repository's `exactOptionalPropertyTypes` setting sharpens the objection further: an optional member can only be omitted, never explicitly present-and-empty, so the truncated record and the product-default entry would be byte-identical.
+
+**A flat provenance discriminator.** A `sourceKind` discriminator with `ruleVersionId` beside it, at the same level as `bucketId` and `policy`, was considered and rejected on the architectural grounds recorded above: it makes rollover the only resolved entry that is itself a union, restates `bucketId` and `policy` per arm, and places two discriminants answering unrelated questions in one object at different depths.
+
+An engineering observation corroborates that conclusion, and is recorded as corroboration only. Under the repository's own compiler settings, the flat shape admits a stale identifier through the ordinary spread idiom the rollover tests already use. Taking an authored entry and overriding only the discriminant type-checks cleanly and yields, at run time, an object carrying `PRODUCT_DEFAULT` alongside the previous `ruleVersionId` — a persisted state the contract forbids. Under the nested shape the corresponding correction replaces the whole `provenance` value, and no stale identifier can survive it; reproducing the fault requires deliberately spreading the inner union. This is evidence about how a shape behaves under the construction idioms actually in use. It is not the ground of the decision, and no persisted contract is settled here on the behaviour of one compiler's excess-property checking.
+
+**Duplicating policy arms by provenance state.** Ten arms, each restating `bucketId` and every policy field, dissolving `RolloverPolicyConfig`. Rejected as multiplication of independent dimensions, with no impossible-state benefit over the nested shape.
+
+**A wrapper around `bucketId` and `policy`.** Rejected. It adds a serialization level, moves `bucketId` inside a wrapper so the entry is no longer directly keyed by the field Decision 074 orders the array by, and buys nothing the nested member does not.
+
+**A shared provenance type now.** Rejected for the reasons under "The type is rollover-local": one adopter is not reuse, Decision 086's refusal to name a vocabulary before its union exists applies with more force where the second adopter is explicitly undetermined, and later promotion costs nothing persisted.
+
+**A sentinel or fabricated `RuleVersionId`.** Rejected by Decision 093 in terms. Independently barred by PFOS-ENG-00 §14's opacity requirement, and by Decision 086's rejection of §42.1's `["all"]` magic value inside an array of identifiers on exactly that ground.
+
+**A manufactured implicit `Rule` or `RuleVersion` for the default.** Rejected by Decision 093 in terms, on Decision 081's holding that a product default has none of the fields PFOS-ENG-01 §18 requires of a permanent rule, no effective period under Decision 078, and no audit relationship under §40. Decision 081 additionally recorded that representing product defaults as authored rules was rejected notwithstanding that it would have concealed the provenance gap — the concealment being the objection, not the attraction.
+
+**Adding `ruleId`.** Considered and closed above.
+
+**Coupling `PRODUCT_DEFAULT` to `CARRY_ALL`.** Considered and refused above.
+
+## Relationship to earlier decisions
+
+Decision 093 is applied, not amended: its general semantic, its scope limitation to `ResolvedRolloverPolicy`, its invariants and its deferrals all stand, and this decision performs the contract work it assigned.
+
+Decision 074 is applied rather than amended, except that `ResolvedRolloverPolicy` changes shape as Decision 093 already established; its ordering rule, its `sourceRuleVersionIds` definition, its schema-version rule and every other element stand. `RolloverPolicyConfig` as Decision 074 declared it is unchanged in every particular.
+
+Decision 086's holding that each family's inner discriminant keeps its accepted name and meaning is preserved: `policyType` is untouched. Decision 091's two-identity holding is confined to the family whose justification it stated, and is not extended here. Decision 092's schema-transition posture, including its treatment of alias adoption as not itself incompatible, is applied. Decisions 023, 028, 068, 073, 078, 080, 081, 082, 083, 085, 088 and 090 are unamended.
+
+## What this decision closes
+
+The persisted and source spelling of default-sourced provenance for `ResolvedRolloverPolicy`: the member, its nesting, its discriminant property, both literals, both arm contents, the identifier type, the type's name and its locality.
+
+The question whether `ResolvedRolloverPolicy` carries `ruleId`: it does not.
+
+The stability of the rollover target shape for the purposes of the numeric schema transition.
+
+## What this decision does not close
+
+The numeric `ResolvedRuleSet` schema-version target, migration architecture, and compatibility readers in either direction. `PlanSnapshot` schema-version semantics and its relationship to `ResolvedRuleSet.schemaVersion`. Product-default identity and versioning. Runtime and import validation, any validator API, and any error code. The `sourceRuleVersionIds` alias typing and the equivalent typing on the other resolved families. The `goalPolicies` population and `ResolvedGoalPolicy`'s persisted shape. `ResolvedFundingRule`'s provenance beyond its authored-sourced holding. The definition of "allocatable bucket" and the required-funding completeness predicate. The `GOAL_POLICY` and `GOAL_UNTIL_TARGET` duplication. The `GLOBAL_OBLIGATION` `RuleConfiguration` payload and the authored provenance of its `maximumAmount`. The canonical ordering key for `globalObligations`. The `LOWER_PRIORITY_POOL` `FIXED_AMOUNTS` authored sequence. The `RuleConfiguration` union, `ConfiguredRuleVersion`, the full `RuleVersion` contract and its §41 metadata. The contract pairing a `Rule` with its versions. Evaluation-context API and population. Explanation multiplicity. Blocker F. The `resolvedRuleSetId` determinism question. The identifier-ordering documentation wording. The canonical product-default representation on plural-`ruleVersionIds` families. All Milestone 3 behaviour. All implementation.
+
+## Deliberately deferred
+
+- The numeric `ResolvedRuleSet` schema-version target, and whether that transition carries this change alone or with another settled change.
+- Migration behaviour, read-migration, dual-version support and compatibility readers.
+- Runtime validation of persisted and imported rollover entries, and the error code that would report a failure.
+- Promotion of `RolloverPolicyProvenance` to a shared type, which awaits a second family whose product-default sourcing is established.
+- The bounded implementation, which awaits this decision and the numeric transition.
+
+## Future Review Trigger
+
+Reconsider when the numeric schema transition is taken, since it depends on the shape fixed here; when the `goalPolicies` population is settled, since a default-sourced `ResolvedGoalPolicy` would apply Decision 093's semantic and may justify promoting the provenance type; if any future accepted decision introduces a product default for required funding, since `ResolvedFundingRule` provenance would then need revisiting; if an accepted source ever requires identifying which product-default definition supplied a value, since Decision 093 left that identity open and the `PRODUCT_DEFAULT` arm carries none; if an accepted requirement demonstrates a need for stable logical `Rule` identity in a resolved rollover entry, since `ruleId` is closed here for want of such a need rather than in principle; and when a persistence or import authority is established, since the untrusted-input boundary recorded above becomes actionable then.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
