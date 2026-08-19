@@ -6,15 +6,22 @@ import { timestamp } from '@domain/shared/dates/timestamp';
 import { domainError, type DomainError } from '@domain/shared/errors/domain-error';
 import { ERROR_CATEGORIES } from '@domain/shared/errors/error-category';
 import { err, ok, type Result } from '@domain/shared/errors/result';
-import { asEntityId } from '@domain/shared/ids/entity-id';
+import { asEntityId, type EntityId } from '@domain/shared/ids/entity-id';
 import { formatUsd } from '@domain/shared/money/money-format';
 import { parseUsd } from '@domain/shared/money/money-parse';
 
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
-import { SAMPLE_AUTHORED_PLAN, SAMPLE_BUCKET_LABELS, SAMPLE_INCOME_SOURCE } from './sample-plan';
+import {
+  buildAuthoredPaycheckPlan,
+  SAMPLE_INCOME_SOURCE,
+  type AuthoredPaycheckPlan,
+  type EditablePaycheckPlan,
+} from './paycheck-plan';
 
 /** What a person typed, plus the two values the domain may not read for itself. */
 export interface PaycheckPreviewRequest {
+  /** The plan to preview against, as edited on screen. */
+  readonly plan: EditablePaycheckPlan;
   /** The amount as typed, unparsed. `parseUsd` owns the format. */
   readonly amount: string;
   /** The paycheck date as `YYYY-MM-DD`, the shape a date input produces. */
@@ -74,6 +81,11 @@ export interface PaycheckPreview {
 export function previewPaycheckAllocation(
   request: PaycheckPreviewRequest,
 ): Result<PaycheckPreview, DomainError> {
+  const authored = buildAuthoredPaycheckPlan(request.plan);
+  if (!authored.ok) {
+    return authored;
+  }
+
   const event = buildIncomeEvent(request);
   if (!event.ok) {
     return event;
@@ -85,7 +97,7 @@ export function previewPaycheckAllocation(
   }
 
   const plan = resolveRuleSet({
-    rules: SAMPLE_AUTHORED_PLAN,
+    rules: authored.value.rules,
     evaluationDate: event.value.eventDate,
     incomeSourceId: event.value.incomeSourceId,
     resolvedRuleSetId: asEntityId('resolved-rule-set-preview'),
@@ -105,7 +117,7 @@ export function previewPaycheckAllocation(
   return ok({
     lines: allocation.value.lines.map((line) => ({
       bucketId: line.bucketId,
-      label: SAMPLE_BUCKET_LABELS[line.bucketId] ?? line.bucketId,
+      label: labelFor(authored.value, line.bucketId),
       amount: formatUsd(line.amount),
     })),
     totalAllocated: formatUsd(allocation.value.totalAllocated),
@@ -157,6 +169,17 @@ function buildIncomeEvent(
     eligibleAmount: amount.value,
     eventType: 'PAYCHECK',
   });
+}
+
+/**
+ * The name to show for a bucket, falling back to its identifier.
+ *
+ * The fallback is unreachable for the plan built above, which names every
+ * bucket it funds. It exists so that a future destination without a label
+ * degrades to something inspectable rather than to an empty cell.
+ */
+function labelFor(authored: AuthoredPaycheckPlan, bucketId: EntityId): string {
+  return authored.labels[bucketId] ?? bucketId;
 }
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
+import { DEFAULT_PAYCHECK_PLAN, type EditablePaycheckPlan } from './paycheck-plan';
 import {
   previewPaycheckAllocation,
   type PaycheckPreviewRequest,
@@ -11,12 +12,18 @@ const REQUESTED_AT = 1_767_225_600_000;
 
 function request(overrides: Partial<PaycheckPreviewRequest> = {}): PaycheckPreviewRequest {
   return {
+    plan: DEFAULT_PAYCHECK_PLAN,
     amount: '2000',
     eventDate: '2026-01-15',
     requestedAt: REQUESTED_AT,
     timeZone: 'America/Los_Angeles',
     ...overrides,
   };
+}
+
+/** The default plan with one value replaced. */
+function planWith(overrides: Partial<EditablePaycheckPlan>): EditablePaycheckPlan {
+  return { ...DEFAULT_PAYCHECK_PLAN, ...overrides };
 }
 
 /** Unwraps a successful preview, failing loudly if it was rejected. */
@@ -83,6 +90,135 @@ describe('previewing a paycheck against the sample plan', () => {
     for (const line of preview().lines) {
       expect(line.label).not.toBe(line.bucketId);
     }
+  });
+});
+
+describe('editing the plan changes the authored rules', () => {
+  /** The preview as [label, amount] pairs, in display order. */
+  function split(plan: EditablePaycheckPlan): readonly (readonly string[])[] {
+    return preview(request({ plan })).lines.map((line) => [line.label, line.amount]);
+  }
+
+  /*
+   * Raising the giving rate raises the obligation and shrinks what is left. The
+   * fixed requirement does not move, because it is a fixed amount rather than a
+   * share — which is only true if the rate reached the authored rule rather
+   * than being applied to an already-computed answer.
+   */
+  it('raises the obligation when the giving percentage rises', () => {
+    expect(split(planWith({ givingPercent: '12' }))).toEqual([
+      ['Giving', '$240.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,260.00'],
+    ]);
+  });
+
+  it('changes the requirement when the emergency-fund amount changes', () => {
+    expect(split(planWith({ givingPercent: '12', emergencyFundPerPaycheck: '600' }))).toEqual([
+      ['Giving', '$240.00'],
+      ['Emergency Fund', '$600.00'],
+      ['Spending', '$1,160.00'],
+    ]);
+  });
+
+  it('accepts a fractional percentage down to one basis point', () => {
+    expect(split(planWith({ givingPercent: '12.5' }))).toEqual([
+      ['Giving', '$250.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,250.00'],
+    ]);
+  });
+
+  /* Renaming a destination renames what is shown and nothing else. */
+  it('shows the leftover destination under its new name', () => {
+    const result = preview(request({ plan: planWith({ leftoverLabel: 'Everyday spending' }) }));
+
+    expect(result.lines.map((line) => line.label)).toEqual([
+      'Giving',
+      'Emergency Fund',
+      'Everyday spending',
+    ]);
+    expect(result.lines.map((line) => line.amount)).toEqual(['$200.00', '$500.00', '$1,300.00']);
+  });
+
+  it('keeps the bucket identity when the label changes', () => {
+    const before = preview(request({ plan: DEFAULT_PAYCHECK_PLAN }));
+    const after = preview(request({ plan: planWith({ leftoverLabel: 'Fun money' }) }));
+
+    expect(after.lines.map((line) => line.bucketId)).toEqual(
+      before.lines.map((line) => line.bucketId),
+    );
+  });
+
+  /*
+   * A whole paycheck given away leaves nothing for the stages behind it. The
+   * two remaining stages differ, and both behaviours are the executor's own: a
+   * top priority reports that it received nothing, while the leftover policy
+   * emits no line at all rather than a $0.00 movement of money that did not
+   * occur.
+   */
+  it('lets the plan reach the boundaries the domain allows', () => {
+    expect(split(planWith({ givingPercent: '100' }))).toEqual([
+      ['Giving', '$2,000.00'],
+      ['Emergency Fund', '$0.00'],
+    ]);
+  });
+});
+
+describe('plan values a person can correct', () => {
+  it('rejects a percentage that is not a number', () => {
+    expect(rejected(request({ plan: planWith({ givingPercent: 'ten' }) })).code).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_PLAN_GIVING_PERCENT_INVALID,
+    );
+  });
+
+  it('rejects a negative percentage', () => {
+    expect(rejected(request({ plan: planWith({ givingPercent: '-5' }) })).code).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_PLAN_GIVING_PERCENT_INVALID,
+    );
+  });
+
+  /* The 0%-to-100% bound is the domain's, and its answer is returned unchanged. */
+  it('surfaces the domain bound for a percentage above 100', () => {
+    expect(rejected(request({ plan: planWith({ givingPercent: '150' }) })).code).toBe(
+      'BASIS_POINTS_OUT_OF_RANGE',
+    );
+  });
+
+  /* So is the limit on precision finer than one basis point. */
+  it('surfaces the domain answer for a percentage finer than a basis point', () => {
+    expect(rejected(request({ plan: planWith({ givingPercent: '10.125' }) })).code).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_PLAN_GIVING_PERCENT_INVALID,
+    );
+  });
+
+  it('rejects an emergency-fund amount that is not money', () => {
+    expect(
+      rejected(request({ plan: planWith({ emergencyFundPerPaycheck: 'five hundred' }) })).code,
+    ).toBe('MONEY_PARSE_INVALID_FORMAT');
+  });
+
+  it('rejects a negative emergency-fund amount', () => {
+    expect(rejected(request({ plan: planWith({ emergencyFundPerPaycheck: '-100' }) })).code).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_PLAN_FUNDING_AMOUNT_NEGATIVE,
+    );
+  });
+
+  /* Zero funds nothing, which is representable rather than invalid. */
+  it('accepts an emergency-fund amount of zero', () => {
+    const result = preview(request({ plan: planWith({ emergencyFundPerPaycheck: '0' }) }));
+
+    expect(result.lines.map((line) => [line.label, line.amount])).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$0.00'],
+      ['Spending', '$1,800.00'],
+    ]);
+  });
+
+  it('rejects a blank leftover destination name', () => {
+    expect(rejected(request({ plan: planWith({ leftoverLabel: '   ' }) })).code).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_PLAN_LEFTOVER_LABEL_EMPTY,
+    );
   });
 });
 

@@ -36,6 +36,41 @@ export const APPLICATION_ERROR_CODES = {
    * here.
    */
   APPLICATION_PAYCHECK_DATE_INVALID_FORMAT: 'APPLICATION_PAYCHECK_DATE_INVALID_FORMAT',
+
+  /*
+   * A giving percentage was not written as a plain percentage.
+   *
+   * Only the shape is checked here: digits with at most two decimal places and
+   * no sign. Whether the value is a usable rate belongs to the domain —
+   * `fromPercent` rejects anything finer than a basis point, and `basisPoints`
+   * bounds a rate to 0% through 100% — and those answers are returned
+   * unchanged rather than restated here. No new limit is introduced.
+   */
+  APPLICATION_PLAN_GIVING_PERCENT_INVALID: 'APPLICATION_PLAN_GIVING_PERCENT_INVALID',
+
+  /*
+   * A per-paycheck funding amount was negative.
+   *
+   * `parseUsd` accepts a leading minus because negative Money is legitimate
+   * elsewhere, so the sign is checked where the value is used. A requirement to
+   * put a negative amount into a bucket describes money leaving it, which no
+   * accepted funding type expresses.
+   *
+   * Zero is accepted. A requirement of nothing funds nothing, which is
+   * representable and harmless, and refusing it would invent a minimum no
+   * accepted source states.
+   */
+  APPLICATION_PLAN_FUNDING_AMOUNT_NEGATIVE: 'APPLICATION_PLAN_FUNDING_AMOUNT_NEGATIVE',
+
+  /*
+   * A destination was left without a name to show.
+   *
+   * This is a display label, not an identity. PFOS-ENG-00 §14 keeps the bucket
+   * identifier opaque and PFOS-ENG-01 §26 forbids resolution from depending on
+   * a display name, so an empty label is a presentation problem rather than a
+   * financial one — but a preview whose destination has no name cannot be read.
+   */
+  APPLICATION_PLAN_LEFTOVER_LABEL_EMPTY: 'APPLICATION_PLAN_LEFTOVER_LABEL_EMPTY',
 } as const;
 
 export type ApplicationErrorCode =
