@@ -8702,6 +8702,129 @@ Reconsider when a persistence layer or a stored Plan Snapshot is introduced, sin
 
 ---
 
+# Decision 096: Bounded Authorability and the First Three RuleConfiguration Arms
+
+**Status:** Accepted
+**Related:** Decisions 071, 073, 074, 078, 080, 081, 082, 083, 085, 086, 087, 088, 089, 090, 091, 093, 095
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+`RuleConfiguration` may cover a bounded subset of `ResolvedSlotKind` rather than all eight families.
+
+`ResolvedSlotKind` stays at eight families and is unchanged. A family outside the authorable subset is **not authorable**: no `RuleVersion` configuration may carry it, and that is enforced at rule admission. It is never represented as a placeholder arm, a nullable configuration, `unknown`, arbitrary JSON, `Record<string, unknown>`, or any fabricated payload.
+
+The current authorable subset is `GLOBAL_OBLIGATION`, `TOP_PRIORITIES` and `LEFTOVER_POLICY`.
+
+Each arm carries the family tag `slotKind`, drawn from `ResolvedSlotKind`, as Decision 086 fixed.
+
+V1 global obligations carry no authored cap. `ResolvedGlobalObligation.maximumAmount` remains an optional member of the resolved contract and is not populated in V1.
+
+This decision fixes arm membership and field naming by transcription of accepted sources. It defines no resolver, no evaluation context, no aggregate contract, no validator and no error code; it changes no `ResolvedRuleSet` field and authorises no `schemaVersion` increment; and it authorises no implementation.
+
+## Why bounded authorability is allowed
+
+Decision 086 rejected defining `RuleConfiguration` over the ready families and deferring the rest, on the ground that a closed union missing a V1 family would produce rules that are addressable but not authorable while `Rule.slotKind` continued to admit them.
+
+That objection is against a silent gap, not against a bounded subset. It is answered by making the boundary explicit and enforced rather than implicit and structural. A family outside the subset is not a family whose arm is merely absent; it is a family a rule may not be admitted with, stated here and checkable at admission.
+
+The alternative Decision 086 preferred — waiting for every arm — is no longer neutral. Three families are now transcription-ready: Decision 087 closed the `TOP_PRIORITIES` rank tension, Decision 088 closed `GLOBAL_OBLIGATION` applicability, and Decisions 090 and 091 removed `ResolvedGlobalObligation.sequence` and settled its provenance. The remaining five each still need a semantic no accepted source supplies. Holding three complete arms hostage to five incomplete ones leaves `RuleConfiguration` undefined, and with it the resolver, for reasons that no longer apply to the three.
+
+The subset stays inside Decision 086's own discipline: nothing is invented, and a family is admitted only where every member of its arm is a transcription of an accepted source.
+
+## Current authorable subset
+
+Provenance is never authored. `ruleId`, `ruleVersionId` and `ruleVersionIds` on the resolved contracts are supplied during resolution from the envelope Decision 086 fixed, and no arm below carries them.
+
+Three fields named by PFOS-ENG-01 as configurable are owned elsewhere and appear on no arm: the effective date is the envelope's `period` under Decision 078, enablement is rule lifecycle under Decisions 083 and 085, and rounding is uniform under Decision 071, which admits no per-rule rounding field.
+
+**`GLOBAL_OBLIGATION`** carries:
+
+- `destinationBucketId`, `rateBasisPoints` and `incomeBasis`, transcribing PFOS-ENG-01 §12.2 and Decision 074;
+- `applicability`, being exactly one of Decision 088's three semantics, spelled `scope: 'ALL_SOURCES'`, `scope: 'ONLY_LISTED_SOURCES'` and `scope: 'ALL_EXCEPT_LISTED_SOURCES'`, where the two listed semantics carry a non-empty set `incomeSourceIds` of opaque income-source identities.
+
+The spellings avoid "eligible" throughout, as Decision 088's caution requires, so that source applicability is never confused with the eligible-income computation Blocker F owns. Decision 088's three semantics are preserved exactly and none is added.
+
+No cap member exists. §12.2 enumerates the configurable fields of this family and contains no cap or maximum; §15.1's "Maximum, if any" is a field of the funding-rule types governing `REQUIRED_FUNDING`, and importing it across families would be invention rather than transcription. Decision 089 records that no accepted source redirects a capped excess, so a cap would also need excess semantics this corpus does not supply.
+
+**`TOP_PRIORITIES`** carries `strategy`, being `'SEQUENTIAL'` or `'PERCENTAGE_SPLIT'` in Decision 074's spellings, together with `entries`, the whole member set authored in the single `GLOBAL` Rule Decision 082 fixed.
+
+Each entry carries `bucketId` and a required `rank` under both strategies, per Decision 087. Under `PERCENTAGE_SPLIT` an entry additionally carries `shareBasisPoints`. Position within `entries` carries no financial meaning under either strategy; rank is the financial ordering key.
+
+**`LEFTOVER_POLICY`** carries `policyType` in Decision 074's five spellings, with per-arm members transcribing PFOS-ENG-01 §16:
+
+- `'LEAVE_UNALLOCATED'` — no further member;
+- `'SINGLE_DESTINATION'` — `destinationBucketId`;
+- `'PERCENTAGE_SPLIT'` — `destinations`, each carrying `bucketId` and `shareBasisPoints`;
+- `'HIGHEST_PRIORITY_UNFINISHED_GOAL'` — no further member;
+- `'MAINTAIN_BUFFER_THEN_REDIRECT'` — `bufferAmount` and `destinationBucketId`.
+
+No arm carries a fallback, per Decision 074. §16.4's requirement that an authored percentage pool total exactly 10,000 basis points is unchanged and is not implemented here. `LEAVE_UNALLOCATED` being the product default under Decision 093 does not make it unauthorable: a product default is not a rule under Decision 081, so the default and the authored arm coexist.
+
+## Treatment of unsupported families
+
+`REQUIRED_FUNDING`, `LOWER_PRIORITY_POOL`, `ALLOCATION_BASIS`, `GOAL_POLICY` and `ROLLOVER_POLICY` are not authorable.
+
+Not authorable means a `RuleVersion` configuration carrying one of these families is rejected at rule admission, not accepted and later ignored. Nothing stands in for the absent payload. Decision 086's exclusions are carried forward in full: no placeholder arm, no nullable or absent configuration, no `unknown`, no `Record<string, unknown>`, no arbitrary JSON, and no invented type. PFOS-ENG-01 §47.9 requires unknown rule variants to be rejected rather than accommodated, and PFOS-ENG-00 §29.1 treats imported content as untrusted, so a family with no accepted payload must be unrepresentable rather than merely invalid.
+
+`ResolvedSlotKind` keeps all eight members, and `Rule.slotKind` under Decision 081 is unchanged. A rule of an unsupported family remains addressable; it is its configuration that cannot exist. That asymmetry is the explicit boundary this decision substitutes for the silent gap Decision 086 objected to.
+
+Non-authorability is a statement about authored configuration only. It says nothing about product defaults, which Decision 093 already supplies for `leftoverPolicy` and `allocationBasis`, and nothing about whether a family is resolvable by other means.
+
+## Extension rule
+
+A later Decision may add one arm for one family by establishing that family's payload from accepted sources, without reopening this decision's general rule.
+
+Such a Decision must name its own fields and persisted literals rather than leave them to an implementation, must supply the semantic the family currently lacks rather than assume it, and must state that the family moves from not authorable to authorable.
+
+Adding an arm is additive on the authored side and requires no change to this decision. Whether any arm requires a `ResolvedRuleSet` `schemaVersion` increment is governed by Decision 074 and is not decided here; none of the three arms above requires one.
+
+The same route applies to a global-obligation cap: an accepted source granting one would add a cap member to the `GLOBAL_OBLIGATION` arm and populate an already-present optional resolved member, without a resolved-contract change.
+
+## What this closes
+
+`RuleConfiguration` may now be defined over a bounded subset, and the scope question Decision 086 deferred is answered.
+
+Three arms are fixed in membership and field naming: `GLOBAL_OBLIGATION`, `TOP_PRIORITIES` and `LEFTOVER_POLICY`.
+
+The authored provenance of `ResolvedGlobalObligation.maximumAmount` is settled negatively: there is none in V1, and the field is not populated.
+
+Decision 086's exclusion of placeholder payloads is extended into a positive admission rule.
+
+## What remains unresolved
+
+The payload of every unsupported family, and each family's own blocker as Decision 086 recorded it: the `REQUIRED_FUNDING` authored source for `sequence`, `isProtected` and `allowExcessAboveCapacity`; the `LOWER_PRIORITY_POOL` `FIXED_AMOUNTS` authored sequence; whether a user authors `ALLOCATION_BASIS` at all; the `GOAL_POLICY` and `GOAL_UNTIL_TARGET` duplication; and the `ROLLOVER_POLICY` payload.
+
+An accepted source for a global-obligation cap. The item recorded by Decisions 093 and 095 narrows accordingly: the `GLOBAL_OBLIGATION` payload is settled here, and only a cap source remains open.
+
+Authoring granularity and ownership for `LEFTOVER_POLICY`, which Decision 082 did not address and which this decision does not settle.
+
+The correction of PFOS-ENG-01 §42.1, §42.2 and §42.3, which Decisions 087 and 088 assigned to the payload decision. Those examples remain as written, remain non-authoritative on member shape, and the editorial replacement is now due and is not performed here.
+
+`ConfiguredRuleVersion`, the full `RuleVersion` contract and its §41 metadata, the contract pairing a `Rule` with its versions, the admission check itself and any code it would report, evaluation context, same-level contention, resolver API and population, the canonical serialised order of an authored collection, the canonical ordering key for `globalObligations`, Blocker C, Blocker F, persistence, migration, compatibility readers, and all Milestone 3 behaviour.
+
+## Minimal alternatives
+
+Waiting for all eight arms was rejected. It is Decision 086's original route, and it now blocks three complete families on five incomplete ones for a reason that has expired for the three.
+
+A closed union with placeholder arms for the five was rejected. Decision 086 excluded every available placeholder shape, and a placeholder is precisely the silent gap that made a bounded subset objectionable.
+
+Transcribing §15.1's "Maximum, if any" into the `GLOBAL_OBLIGATION` arm was rejected, for the reasons given under that arm.
+
+Removing `maximumAmount` from `ResolvedGlobalObligation` was rejected here. It is an incompatible persisted-contract change requiring its own transition under Decision 074, and Decision 089 reasons about the field as present.
+
+## Consequences
+
+`RuleConfiguration` becomes definable over three families, and the resolver's authored input has an accepted shape for the first time.
+
+Three families become authorable. Five become explicitly not authorable, which is a stronger and more checkable statement than their previous silence.
+
+`ResolvedSlotKind`, `Rule.slotKind`, `ResolvedRuleSet`, `schemaVersion`, `sourceRuleVersionIds` and Plan Snapshot design are unchanged. Decisions 074, 078, 081, 082, 086, 087, 088, 089, 090, 091 and 093 are unamended.
+
+No specification text changes, no validator is authorised, no error code is registered, no registry changes, and no code is authorised by this decision.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
