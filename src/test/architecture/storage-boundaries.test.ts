@@ -124,4 +124,48 @@ describe('the infrastructure layer is where storage lives', () => {
 
     expect(infrastructureCode).toContain('localStorage');
   });
+
+  /* Decision 056 and Decision 098 holding 9: financial records go to IndexedDB. */
+  it('holds the IndexedDB implementation', () => {
+    const infrastructureCode = infrastructureFiles
+      .map(([, source]) => stripComments(source))
+      .join('\n');
+
+    expect(infrastructureCode).toContain('indexedDB.open');
+  });
+});
+
+/*
+ * Which storage medium holds what.
+ *
+ * Decision 056 rejected local storage for financial data and Decision 098 keeps
+ * confirmed paychecks in IndexedDB, while the three preview plan settings stay
+ * in the local-storage adapter they have always used. Each medium is pinned to
+ * the one file allowed to reach it, so a confirmed record cannot drift into
+ * local storage and settings cannot drift into the financial store.
+ */
+describe('each storage medium is reached from exactly one place', () => {
+  function filesUsing(global: string): readonly string[] {
+    return infrastructureFiles
+      .filter(([, source]) => stripComments(source).includes(global))
+      .map(([path]) => path);
+  }
+
+  it('reaches local storage only from the preview-settings adapter', () => {
+    const files = filesUsing('localStorage');
+
+    expect(files.length).toBeGreaterThan(0);
+    for (const path of files) {
+      expect(path).toContain('local-storage-paycheck-plan-storage');
+    }
+  });
+
+  it('reaches IndexedDB only from the confirmed-paycheck store', () => {
+    const files = filesUsing('indexedDB');
+
+    expect(files.length).toBeGreaterThan(0);
+    for (const path of files) {
+      expect(path).toContain('indexed-db-confirmed-paycheck-store');
+    }
+  });
 });
