@@ -394,6 +394,81 @@ describe('explaining why each line got its amount', () => {
   });
 });
 
+describe('summarizing whether the plan fit the paycheck', () => {
+  const laptop = (amountPerPaycheck: string, rank: number): EditablePriority =>
+    priority('bucket-laptop', 'Laptop', amountPerPaycheck, rank);
+
+  const emergencyFundAt = (amountPerPaycheck: string, rank: number): EditablePriority =>
+    priority('bucket-emergency-fund', 'Emergency Fund', amountPerPaycheck, rank);
+
+  /* The same constrained plan the per-line explanations use. */
+  const CONSTRAINED = planWithPriorities(laptop('300', 1), emergencyFundAt('1000', 2));
+
+  /*
+   * $1,200 less 10% of giving leaves $1,080 against $1,300 of requirements. The
+   * plan-level answer is the first thing a person should be able to read.
+   */
+  it('says the priorities did not all fit, with what they asked for and got', () => {
+    expect(preview(request({ plan: CONSTRAINED, amount: '1200' })).priorityFundingSummary).toBe(
+      'Not every top priority could be fully funded from this paycheck: they requested ' +
+        '$1,300.00 in total and received $1,080.00.',
+    );
+  });
+
+  /* The summary is the plan-level view; the per-line reasons stay underneath. */
+  it('leaves the per-line explanation saying why the last priority went short', () => {
+    const result = preview(request({ plan: CONSTRAINED, amount: '1200' }));
+
+    expect(result.priorityFundingSummary).toBeDefined();
+    expect(result.lines[2]).toEqual({
+      bucketId: 'bucket-emergency-fund',
+      label: 'Emergency Fund',
+      amount: '$780.00',
+      explanation:
+        'Priority 2 · Requested $1,000.00 · Only $780.00 remained when this priority was reached.',
+    });
+  });
+
+  /* $2,000 covers $500 and $300 with room to spare, so there is nothing to say. */
+  it('says nothing when every priority was funded in full', () => {
+    const plan = planWithPriorities(emergencyFundAt('500', 1), laptop('300', 2));
+
+    expect(preview(request({ plan, amount: '2000' })).priorityFundingSummary).toBeUndefined();
+  });
+
+  /* A plan with no priorities cannot have gone short. */
+  it('says nothing when the plan has no priorities', () => {
+    expect(
+      preview(request({ plan: planWithPriorities(), amount: '2000' })).priorityFundingSummary,
+    ).toBeUndefined();
+  });
+
+  /*
+   * The exhausted case is the boundary: a priority reached with nothing left is
+   * still a priority that did not get what it asked for.
+   */
+  it('counts a priority that received nothing at all', () => {
+    const plan = planWith({ givingPercent: '100', priorities: [emergencyFundAt('500', 1)] });
+
+    expect(preview(request({ plan, amount: '2000' })).priorityFundingSummary).toBe(
+      'Not every top priority could be fully funded from this paycheck: they requested ' +
+        '$500.00 in total and received $0.00.',
+    );
+  });
+
+  /*
+   * The summary describes one paycheck. It may not say what is owed, what to do
+   * about it, or what a later paycheck will hold.
+   */
+  it('never claims anything beyond the allocation it describes', () => {
+    const summary = preview(request({ plan: CONSTRAINED, amount: '1200' })).priorityFundingSummary;
+
+    expect(summary).not.toMatch(
+      /owe|debt|deficit|behind|underfunded|shortfall|next time|carry|should|recommend|need to/i,
+    );
+  });
+});
+
 describe('plan values a person can correct', () => {
   it('rejects a percentage that is not a number', () => {
     expect(rejected(request({ plan: planWith({ givingPercent: 'ten' }) })).code).toBe(

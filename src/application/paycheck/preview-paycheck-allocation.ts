@@ -1,6 +1,7 @@
 import type { AllocationExplanation } from '@domain/allocation/contracts/allocation-explanation';
 import { ALLOCATION_EXPLANATION_CODES } from '@domain/allocation/contracts/allocation-explanation';
 import type { AllocationIncomeEvent } from '@domain/allocation/contracts/allocation-income-event';
+import type { AllocationLine } from '@domain/allocation/contracts/allocation-result';
 import { executeAllocation } from '@domain/allocation/services/execute-allocation';
 import { resolveRuleSet } from '@domain/rules/services/resolve-rule-set';
 import { financialDate, type FinancialDate } from '@domain/shared/dates/financial-date';
@@ -9,6 +10,7 @@ import { domainError, type DomainError } from '@domain/shared/errors/domain-erro
 import { ERROR_CATEGORIES } from '@domain/shared/errors/error-category';
 import { err, ok, type Result } from '@domain/shared/errors/result';
 import { asEntityId, type EntityId } from '@domain/shared/ids/entity-id';
+import { sum } from '@domain/shared/money/money-arithmetic';
 import { formatUsd } from '@domain/shared/money/money-format';
 import type { Money } from '@domain/shared/money/money';
 import { parseUsd } from '@domain/shared/money/money-parse';
@@ -55,6 +57,14 @@ export interface PaycheckPreview {
   readonly lines: readonly PaycheckPreviewLine[];
   readonly totalAllocated: string;
   readonly unallocated: string;
+  /**
+   * How the top priorities as a whole fared, when they did not all fit.
+   *
+   * Absent when every priority received what it asked for, and absent when a
+   * plan has no priorities at all: a person reading a plan that fit needs no
+   * sentence telling them so.
+   */
+  readonly priorityFundingSummary?: string | undefined;
 }
 
 /**
@@ -119,6 +129,11 @@ export function previewPaycheckAllocation(
     return allocation;
   }
 
+  const priorityFundingSummary = summarizePriorityFunding(allocation.value.lines);
+  if (!priorityFundingSummary.ok) {
+    return priorityFundingSummary;
+  }
+
   return ok({
     lines: allocation.value.lines.map((line) => ({
       bucketId: line.bucketId,
@@ -128,6 +143,7 @@ export function previewPaycheckAllocation(
     })),
     totalAllocated: formatUsd(allocation.value.totalAllocated),
     unallocated: formatUsd(allocation.value.unallocated),
+    priorityFundingSummary: priorityFundingSummary.value,
   });
 }
 
@@ -246,6 +262,83 @@ function formatPercent(rateBasisPoints: number): string {
   const trimmed = padded.endsWith('0') ? padded.slice(0, 1) : padded;
 
   return `${String(whole)}.${trimmed}%`;
+}
+
+/**
+ * Says whether the priorities as a group asked for more than this paycheck gave
+ * them.
+ *
+ * A person reading a preview sees the plan-level answer before the per-line
+ * ones, so the shape of the paycheck is legible without adding up rows. It is a
+ * different question from the per-line explanations rather than a repetition of
+ * them: each line says why one destination got its amount, and this says
+ * whether the plan as a whole fit.
+ *
+ * Nothing new is computed about the allocation. Both totals are sums of facts
+ * the engine already emitted — the requested amounts it carried on the
+ * explanations and the amounts it allocated — added with the shared Money
+ * arithmetic, so no dollars are handled as JavaScript numbers and neither total
+ * can disagree with the rows beneath it.
+ *
+ * Only the two sums are stated. What the difference between them means is a
+ * shortfall question, and PFOS-ENG-02 §41's shortfall behaviour is not
+ * implemented: nothing here records an unmet amount, carries anything into a
+ * later paycheck, grades the plan or suggests a change. It describes one
+ * execution, in the past tense, and stops.
+ *
+ * A fully funded plan returns nothing rather than a reassurance. So does a plan
+ * with no priorities, which cannot have gone short.
+ */
+function summarizePriorityFunding(
+  lines: readonly AllocationLine[],
+): Result<string | undefined, DomainError> {
+  const requested: Money[] = [];
+  const received: Money[] = [];
+  let anyPartial = false;
+
+  for (const line of lines) {
+    const { explanation } = line;
+
+    if (
+      explanation.code !==
+        ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_FUNDED_IN_FULL &&
+      explanation.code !== ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_POOL_EXHAUSTED
+    ) {
+      continue;
+    }
+
+    anyPartial =
+      anyPartial ||
+      explanation.code === ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_POOL_EXHAUSTED;
+    requested.push(explanation.requestedAmount);
+    received.push(line.amount);
+  }
+
+  /*
+   * The currency is taken from the amounts being added rather than assumed, and
+   * `sum` refuses a list that mixes currencies. With no priorities there is
+   * nothing to sum and nothing to say.
+   */
+  const currency = requested[0]?.currency;
+  if (!anyPartial || currency === undefined) {
+    return ok(undefined);
+  }
+
+  const requestedTotal = sum(requested, currency);
+  if (!requestedTotal.ok) {
+    return requestedTotal;
+  }
+
+  const receivedTotal = sum(received, currency);
+  if (!receivedTotal.ok) {
+    return receivedTotal;
+  }
+
+  return ok(
+    'Not every top priority could be fully funded from this paycheck: they requested ' +
+      `${formatUsd(requestedTotal.value)} in total and received ` +
+      `${formatUsd(receivedTotal.value)}.`,
+  );
 }
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
