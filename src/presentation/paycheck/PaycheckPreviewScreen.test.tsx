@@ -165,12 +165,21 @@ describe('the paycheck preview screen', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument();
   });
 
-  /* A preview proposes; it does not save. There is nothing to press that would. */
+  /*
+   * A preview proposes; it does not save. Plan settings are kept, but no button
+   * claims to commit an allocation, confirm a paycheck or move money.
+   */
   it('offers nothing that claims to save or move money', () => {
     renderScreen();
     enterPaycheck('2000');
 
-    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Preview']);
+    const labels = screen.getAllByRole('button').map((button) => button.textContent ?? '');
+
+    expect(labels).toContain('Preview');
+    for (const label of labels) {
+      expect(label).not.toMatch(/save|confirm|commit|transfer|send/i);
+    }
+
     expect(screen.getByText(/Nothing is saved and no money moves/)).toBeInTheDocument();
   });
 
@@ -189,7 +198,8 @@ describe('editing the plan', () => {
     renderScreen();
 
     expect(screen.getByLabelText('Giving')).toHaveValue('10');
-    expect(screen.getByLabelText('Emergency Fund')).toHaveValue('500.00');
+    expect(screen.getByLabelText('Priority 1 name')).toHaveValue('Emergency Fund');
+    expect(screen.getByLabelText('Priority 1 amount')).toHaveValue('500.00');
     expect(screen.getByLabelText('Everything left over goes to')).toHaveValue('Spending');
   });
 
@@ -220,7 +230,7 @@ describe('editing the plan', () => {
     renderScreen();
 
     editPlan('Giving', '12');
-    editPlan('Emergency Fund', '600');
+    editPlan('Priority 1 amount', '600');
     enterPaycheck('2000');
 
     expect(renderedRows()).toEqual([
@@ -265,7 +275,7 @@ describe('editing the plan', () => {
   it('explains a negative funding amount', () => {
     renderScreen();
 
-    editPlan('Emergency Fund', '-100');
+    editPlan('Priority 1 amount', '-100');
     enterPaycheck('2000');
 
     expect(screen.getByRole('alert')).toHaveTextContent('A funding amount cannot be negative.');
@@ -283,6 +293,135 @@ describe('editing the plan', () => {
   });
 });
 
+describe('managing top priorities', () => {
+  /** Presses a button by its exact name. */
+  function press(name: string, nth = 0): void {
+    const buttons = screen.getAllByRole('button', { name });
+    const button = buttons[nth];
+    if (button === undefined) {
+      throw new Error(`No button named ${name} at position ${String(nth)}.`);
+    }
+    fireEvent.click(button);
+  }
+
+  it('starts with one priority', () => {
+    renderScreen();
+
+    expect(screen.getByLabelText('Priority 1 name')).toHaveValue('Emergency Fund');
+    expect(screen.queryByLabelText('Priority 2 name')).not.toBeInTheDocument();
+  });
+
+  it('adds a second priority and funds it', () => {
+    renderScreen();
+
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    enterPaycheck('2000');
+
+    expect(renderedRows()).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Laptop', '$300.00'],
+      ['Spending', '$1,000.00'],
+      ['Total allocated', '$2,000.00'],
+      ['Unallocated', '$0.00'],
+    ]);
+  });
+
+  /* Ordering only shows when the paycheck cannot cover both requirements. */
+  it('funds the top-ranked priority first when money runs short', () => {
+    renderScreen();
+
+    fireEvent.change(screen.getByLabelText('Priority 1 amount'), { target: { value: '1000' } });
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    enterPaycheck('1200');
+
+    expect(renderedRows()).toContainEqual(['Emergency Fund', '$1,000.00']);
+    expect(renderedRows()).toContainEqual(['Laptop', '$80.00']);
+
+    press('Move up', 1);
+    enterPaycheck('1200');
+
+    expect(renderedRows()).toContainEqual(['Laptop', '$300.00']);
+    expect(renderedRows()).toContainEqual(['Emergency Fund', '$780.00']);
+  });
+
+  it('reorders the rows on screen when a priority moves', () => {
+    renderScreen();
+
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+
+    press('Move up', 1);
+
+    expect(screen.getByLabelText('Priority 1 name')).toHaveValue('Laptop');
+    expect(screen.getByLabelText('Priority 2 name')).toHaveValue('Emergency Fund');
+  });
+
+  it('removes a priority', () => {
+    renderScreen();
+
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    press('Remove', 0);
+
+    expect(screen.getByLabelText('Priority 1 name')).toHaveValue('Laptop');
+    expect(screen.queryByLabelText('Priority 2 name')).not.toBeInTheDocument();
+  });
+
+  /* PFOS-ENG-01 §13.1: three is the most, so the control stops being offered. */
+  it('stops offering Add priority at three', () => {
+    renderScreen();
+
+    press('Add priority');
+    press('Add priority');
+
+    expect(screen.queryByRole('button', { name: 'Add priority' })).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Three top priorities is the most a plan can have.'),
+    ).toBeInTheDocument();
+  });
+
+  it('disables moving beyond the ends of the list', () => {
+    renderScreen();
+    press('Add priority');
+
+    const moveUp = screen.getAllByRole('button', { name: 'Move up' });
+    const moveDown = screen.getAllByRole('button', { name: 'Move down' });
+
+    expect(moveUp[0]).toBeDisabled();
+    expect(moveDown[1]).toBeDisabled();
+  });
+
+  it('explains a priority left without a name', () => {
+    renderScreen();
+
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Give every priority a name.');
+  });
+
+  /* Decision 075: a plan with no top priorities is valid, so this is allowed. */
+  it('allows removing the last priority', () => {
+    renderScreen();
+
+    press('Remove', 0);
+    enterPaycheck('2000');
+
+    expect(renderedRows()).toEqual([
+      ['Giving', '$200.00'],
+      ['Spending', '$1,800.00'],
+      ['Total allocated', '$2,000.00'],
+      ['Unallocated', '$0.00'],
+    ]);
+  });
+});
+
 describe('remembering the plan', () => {
   /** Throws the screen away and builds a new one, as a reload would. */
   function reload(): void {
@@ -294,13 +433,13 @@ describe('remembering the plan', () => {
     renderScreen();
 
     editPlan('Giving', '12');
-    editPlan('Emergency Fund', '600');
+    editPlan('Priority 1 amount', '600');
     editPlan('Everything left over goes to', 'Everyday spending');
 
     reload();
 
     expect(screen.getByLabelText('Giving')).toHaveValue('12');
-    expect(screen.getByLabelText('Emergency Fund')).toHaveValue('600');
+    expect(screen.getByLabelText('Priority 1 amount')).toHaveValue('600');
     expect(screen.getByLabelText('Everything left over goes to')).toHaveValue('Everyday spending');
   });
 
@@ -312,7 +451,7 @@ describe('remembering the plan', () => {
     renderScreen();
 
     editPlan('Giving', '12');
-    editPlan('Emergency Fund', '600');
+    editPlan('Priority 1 amount', '600');
     editPlan('Everything left over goes to', 'Everyday spending');
 
     reload();
@@ -335,8 +474,23 @@ describe('remembering the plan', () => {
     reload();
 
     expect(screen.getByLabelText('Giving')).toHaveValue('10');
-    expect(screen.getByLabelText('Emergency Fund')).toHaveValue('500.00');
+    expect(screen.getByLabelText('Priority 1 amount')).toHaveValue('500.00');
     expect(screen.getByLabelText('Everything left over goes to')).toHaveValue('Spending');
+  });
+
+  it('brings back a second priority and its order', () => {
+    renderScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add priority' }));
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Move up' })[1] as HTMLElement);
+
+    reload();
+
+    expect(screen.getByLabelText('Priority 1 name')).toHaveValue('Laptop');
+    expect(screen.getByLabelText('Priority 2 name')).toHaveValue('Emergency Fund');
+    expect(screen.getByLabelText('Priority 1 amount')).toHaveValue('300');
   });
 
   it('remembers nothing about the paycheck or its preview', () => {

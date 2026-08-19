@@ -2,6 +2,17 @@ import { useEffect, useState, type FormEvent, type JSX } from 'react';
 
 import type { EditablePaycheckPlanStorage } from '@application/paycheck/editable-paycheck-plan-storage';
 import {
+  addPriority,
+  canAddPriority,
+  movePriorityDown,
+  movePriorityUp,
+  orderedPriorities,
+  removePriority,
+  renamePriority,
+  setPriorityAmount,
+} from '@application/paycheck/edit-paycheck-plan';
+import type { EditablePaycheckPlan } from '@application/paycheck/paycheck-plan';
+import {
   previewPaycheckAllocation,
   type PaycheckPreview,
 } from '@application/paycheck/preview-paycheck-allocation';
@@ -50,14 +61,11 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
    * The saved plan is read once, when the screen first mounts. Reading it on
    * every render would fight the person typing.
    */
-  const [savedPlan] = useState(() => planStorage.load());
-  const [givingPercent, setGivingPercent] = useState(savedPlan.givingPercent);
-  const [emergencyFundPerPaycheck, setEmergencyFundPerPaycheck] = useState(
-    savedPlan.emergencyFundPerPaycheck,
-  );
-  const [leftoverLabel, setLeftoverLabel] = useState(savedPlan.leftoverLabel);
+  const [plan, setPlan] = useState<EditablePaycheckPlan>(() => planStorage.load());
   const [preview, setPreview] = useState<PaycheckPreview | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
+
+  const priorities = orderedPriorities(plan);
 
   /*
    * Settings are saved as they are edited, so there is no Save button and no
@@ -65,14 +73,14 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
    * these three values are written; a preview is never stored.
    */
   useEffect(() => {
-    planStorage.save({ givingPercent, emergencyFundPerPaycheck, leftoverLabel });
-  }, [planStorage, givingPercent, emergencyFundPerPaycheck, leftoverLabel]);
+    planStorage.save(plan);
+  }, [planStorage, plan]);
 
   function onPreview(submitEvent: FormEvent<HTMLFormElement>): void {
     submitEvent.preventDefault();
 
     const result = previewPaycheckAllocation({
-      plan: { givingPercent, emergencyFundPerPaycheck, leftoverLabel },
+      plan,
       amount,
       eventDate,
       requestedAt: Date.now(),
@@ -113,31 +121,102 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
                 type="text"
                 inputMode="decimal"
                 autoComplete="off"
-                value={givingPercent}
+                value={plan.givingPercent}
                 onChange={(changeEvent) => {
-                  setGivingPercent(changeEvent.target.value);
+                  setPlan({ ...plan, givingPercent: changeEvent.target.value });
                 }}
               />
               <span aria-hidden="true">% of each paycheck</span>
             </div>
           </div>
 
-          <div className="field">
-            <label htmlFor="emergency-fund-amount">Emergency Fund</label>
-            <div className="suffixed">
-              <input
-                id="emergency-fund-amount"
-                name="emergency-fund-amount"
-                type="text"
-                inputMode="decimal"
-                autoComplete="off"
-                value={emergencyFundPerPaycheck}
-                onChange={(changeEvent) => {
-                  setEmergencyFundPerPaycheck(changeEvent.target.value);
+          <div className="priorities">
+            <h2>Top priorities</h2>
+            <p className="hint">Funded in this order, before anything left over.</p>
+
+            {priorities.length === 0 && <p className="hint">No top priorities yet.</p>}
+
+            <ol>
+              {priorities.map((priority, index) => (
+                <li key={priority.id}>
+                  <div className="field">
+                    <label htmlFor={`priority-name-${priority.id}`}>
+                      Priority {index + 1} name
+                    </label>
+                    <input
+                      id={`priority-name-${priority.id}`}
+                      type="text"
+                      autoComplete="off"
+                      value={priority.label}
+                      onChange={(changeEvent) => {
+                        setPlan(renamePriority(plan, priority.id, changeEvent.target.value));
+                      }}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor={`priority-amount-${priority.id}`}>
+                      Priority {index + 1} amount
+                    </label>
+                    <div className="suffixed">
+                      <input
+                        id={`priority-amount-${priority.id}`}
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={priority.amountPerPaycheck}
+                        onChange={(changeEvent) => {
+                          setPlan(setPriorityAmount(plan, priority.id, changeEvent.target.value));
+                        }}
+                      />
+                      <span aria-hidden="true">per paycheck</span>
+                    </div>
+                  </div>
+
+                  <div className="row-actions">
+                    <button
+                      type="button"
+                      disabled={index === 0}
+                      onClick={() => {
+                        setPlan(movePriorityUp(plan, priority.id));
+                      }}
+                    >
+                      Move up
+                    </button>
+                    <button
+                      type="button"
+                      disabled={index === priorities.length - 1}
+                      onClick={() => {
+                        setPlan(movePriorityDown(plan, priority.id));
+                      }}
+                    >
+                      Move down
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlan(removePriority(plan, priority.id));
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ol>
+
+            {canAddPriority(plan) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setPlan(addPriority(plan));
                 }}
-              />
-              <span aria-hidden="true">per paycheck</span>
-            </div>
+              >
+                Add priority
+              </button>
+            ) : (
+              <p className="hint">Three top priorities is the most a plan can have.</p>
+            )}
           </div>
 
           <div className="field">
@@ -147,9 +226,9 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
               name="leftover-label"
               type="text"
               autoComplete="off"
-              value={leftoverLabel}
+              value={plan.leftoverLabel}
               onChange={(changeEvent) => {
-                setLeftoverLabel(changeEvent.target.value);
+                setPlan({ ...plan, leftoverLabel: changeEvent.target.value });
               }}
             />
           </div>

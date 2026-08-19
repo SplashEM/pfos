@@ -114,6 +114,66 @@
   background: #2559c4;
 }
 
+.screen .priorities h2 {
+  margin: 0 0 0.15rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #5a6069;
+}
+
+.screen .hint {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  color: #5a6069;
+}
+
+.screen .priorities ol {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.screen .priorities li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid #e6e9ed;
+  border-radius: 0.375rem;
+  background: #ffffff;
+}
+
+.screen .row-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Row controls are secondary: they act on one priority, not on the plan. */
+.screen .row-actions button,
+.screen .priorities > button {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #2b3038;
+  background: #f1f3f6;
+  border: 1px solid #d3d8de;
+}
+
+.screen .row-actions button:hover:not(:disabled),
+.screen .priorities > button:hover {
+  background: #e4e8ed;
+}
+
+.screen .row-actions button:disabled {
+  color: #9aa1aa;
+  cursor: not-allowed;
+}
+
 .screen .error {
   margin: 1.25rem 0 0;
   padding: 0.75rem 1rem;
