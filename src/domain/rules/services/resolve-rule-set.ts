@@ -187,12 +187,28 @@ export function resolveRuleSet(
 }
 
 /**
- * The lower-priority pool when no authored rule supplies one.
+ * The lower-priority pool this slice resolves.
  *
- * PFOS-ENG-01 §14.1 states the default directly: remaining money designated for
- * lower-priority everyday categories is split evenly. `LOWER_PRIORITY_POOL` is
- * not authorable under Decision 096, so the pool has no destinations and the
- * strategy is the one §14.1 names rather than one chosen here.
+ * The pool is empty because it cannot be otherwise. `LOWER_PRIORITY_POOL` is not
+ * authorable under Decision 096, so no authored source can supply a destination.
+ * The `LOWER_PRIORITY` stage is never sequenced and no money passes through this
+ * pool.
+ *
+ * PFOS-ENG-01 §14.1 and PFOS-ENG-02 §27 establish even splitting as this
+ * family's division method once a pool is populated — "split evenly among
+ * eligible categories" — and PFOS-ENG-02 §28 defines that as a weighted split
+ * carrying weight 1 for every eligible destination.
+ *
+ * Neither designates the resolved `lowerPriorityPool` value for the case where
+ * no rule addresses the slot at all, and nothing here designates one either.
+ * `ResolvedPoolPlan` has no tag-free arm, so an empty pool must still carry a
+ * strategy, and across zero destinations every arm allocates nothing. The tag is
+ * inert in this slice: it establishes no product default, and it has no
+ * financial effect. Decision 093 designated the two members that needed a
+ * product default, and this is not one of them.
+ *
+ * If `LOWER_PRIORITY_POOL` ever becomes authorable, the strategy comes from the
+ * authored configuration and this constant goes away.
  */
 const EMPTY_POOL: ResolvedPoolPlan = { strategy: 'EVEN_SPLIT', destinations: [] };
 

@@ -286,8 +286,13 @@ describe('members no authored rule addresses', () => {
     expect(plan.allocationBasis).toBe('NET_AMOUNT');
   });
 
-  /* PFOS-ENG-01 §14.1 states the even-split default directly. */
-  it('uses the §14.1 even-split default for the unauthorable lower-priority pool', () => {
+  /*
+   * The pool is empty because Decision 096 makes LOWER_PRIORITY_POOL
+   * unauthorable, so no authored destination can exist. The strategy tag is
+   * inert rather than a designated product default: ResolvedPoolPlan has no
+   * tag-free arm, and across zero destinations every arm allocates nothing.
+   */
+  it('resolves an empty lower-priority pool, which no authored rule can fill', () => {
     expect(resolved(request({ rules: [] })).lowerPriorityPool).toEqual({
       strategy: 'EVEN_SPLIT',
       destinations: [],
