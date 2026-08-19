@@ -233,6 +233,82 @@ test('a person can see whether the whole plan fit the paycheck', async ({ page }
   await expect(summary).toHaveCount(0);
 });
 
+/*
+ * The product's first durable answer, driven in a real browser: a person
+ * previews a paycheck, confirms it, and PFOS still remembers exactly that
+ * allocation after a reload and after the plan changes.
+ *
+ * This exercises the shipped bundle against real IndexedDB, so it fails if the
+ * record, the store or the screen stop agreeing.
+ */
+test('a person can confirm a paycheck and still see it after changing the plan', async ({
+  page,
+}) => {
+  await page.goto('/');
+
+  /* A plan with two priorities: Emergency Fund $500, then Laptop $300. */
+  await page.getByRole('button', { name: 'Add priority' }).click();
+  await page.getByLabel('Priority 2 name').fill('Laptop');
+  await page.getByLabel('Priority 2 amount').fill('300');
+
+  await page.getByLabel('Paycheck amount').fill('2000');
+  await page.getByLabel('Paycheck date').fill('2026-01-15');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  const previewRows = page.getByRole('region', { name: 'Preview' }).getByRole('row');
+  await expect(previewRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+
+  /* Nothing is stored by looking. */
+  await expect(page.getByRole('region', { name: 'Latest confirmed paycheck' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Confirm paycheck' }).click();
+
+  await expect(page.getByText('Paycheck confirmed and saved on this device.')).toBeVisible();
+
+  const saved = page.getByRole('region', { name: 'Latest confirmed paycheck' });
+  const savedRows = saved.getByRole('row');
+
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Spending' })).toContainText('$1,000.00');
+  await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
+  await expect(savedRows.filter({ hasText: 'Unallocated' })).toContainText('$0.00');
+
+  /* The confirmed paycheck survives a real reload. */
+  await page.reload();
+
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+
+  /* The plan changes completely. */
+  await page.getByLabel('Giving').fill('20');
+  await page.getByLabel('Priority 1 amount').fill('900');
+  await page.getByLabel('Everything left over goes to').fill('Everyday spending');
+
+  /* Confirming is withdrawn until the preview matches what is on screen. */
+  await expect(page.getByRole('button', { name: 'Confirm paycheck' })).toHaveCount(0);
+
+  await page.getByLabel('Paycheck amount').fill('3000');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  await expect(previewRows.filter({ hasText: 'Giving' })).toContainText('$600.00');
+
+  /* The confirmed paycheck is unchanged by any of it. */
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
+
+  /* Its reasons are the ones it was confirmed with. */
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText(
+    'Priority 1 · Requested $500.00 · Funded in full.',
+  );
+
+  /* And nothing anywhere claims money moved. */
+  await expect(page.getByText('PFOS does not move money').first()).toBeVisible();
+});
+
 test('an unusable amount is explained rather than previewed', async ({ page }) => {
   await page.goto('/');
 
