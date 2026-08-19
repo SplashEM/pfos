@@ -1,9 +1,6 @@
 import { useEffect, useState, type FormEvent, type JSX } from 'react';
 
-import {
-  loadEditablePaycheckPlan,
-  saveEditablePaycheckPlan,
-} from '@application/paycheck/paycheck-plan-storage';
+import type { EditablePaycheckPlanStorage } from '@application/paycheck/editable-paycheck-plan-storage';
 import {
   previewPaycheckAllocation,
   type PaycheckPreview,
@@ -37,15 +34,23 @@ import './paycheck-preview-screen.css';
  * They save themselves as they are edited, so there is no Save button — a
  * button would imply a person is committing something, and the only thing kept
  * is the text they typed into three fields.
+ *
+ * Where they are kept is not this component's business. It calls the
+ * application's storage contract, which the composition root supplies, and never
+ * touches browser storage itself (PFOS-ENG-00 §4.1).
  */
-export function PaycheckPreviewScreen(): JSX.Element {
+export interface PaycheckPreviewScreenProps {
+  readonly planStorage: EditablePaycheckPlanStorage;
+}
+
+export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProps): JSX.Element {
   const [amount, setAmount] = useState('2,000.00');
   const [eventDate, setEventDate] = useState(todayIso());
   /*
    * The saved plan is read once, when the screen first mounts. Reading it on
    * every render would fight the person typing.
    */
-  const [savedPlan] = useState(loadEditablePaycheckPlan);
+  const [savedPlan] = useState(() => planStorage.load());
   const [givingPercent, setGivingPercent] = useState(savedPlan.givingPercent);
   const [emergencyFundPerPaycheck, setEmergencyFundPerPaycheck] = useState(
     savedPlan.emergencyFundPerPaycheck,
@@ -60,8 +65,8 @@ export function PaycheckPreviewScreen(): JSX.Element {
    * these three values are written; a preview is never stored.
    */
   useEffect(() => {
-    saveEditablePaycheckPlan({ givingPercent, emergencyFundPerPaycheck, leftoverLabel });
-  }, [givingPercent, emergencyFundPerPaycheck, leftoverLabel]);
+    planStorage.save({ givingPercent, emergencyFundPerPaycheck, leftoverLabel });
+  }, [planStorage, givingPercent, emergencyFundPerPaycheck, leftoverLabel]);
 
   function onPreview(submitEvent: FormEvent<HTMLFormElement>): void {
     submitEvent.preventDefault();

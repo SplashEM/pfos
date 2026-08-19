@@ -1,7 +1,46 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import type { EditablePaycheckPlanStorage } from '@application/paycheck/editable-paycheck-plan-storage';
+import {
+  DEFAULT_PAYCHECK_PLAN,
+  type EditablePaycheckPlan,
+} from '@application/paycheck/paycheck-plan';
 
 import { PaycheckPreviewScreen } from './PaycheckPreviewScreen';
+
+/*
+ * An in-memory stand-in for the storage port.
+ *
+ * The presentation layer must not reach infrastructure (PFOS-ENG-00 §4.1), and
+ * these tests are about what the screen does with the contract rather than
+ * where a browser keeps the bytes. The real adapter has its own tests, and the
+ * end-to-end suite proves the two together in a real browser.
+ */
+function createMemoryPlanStorage(): EditablePaycheckPlanStorage {
+  let saved: EditablePaycheckPlan | undefined;
+
+  return {
+    load: () => saved ?? DEFAULT_PAYCHECK_PLAN,
+    save: (plan) => {
+      saved = plan;
+    },
+    clear: () => {
+      saved = undefined;
+    },
+  };
+}
+
+let planStorage: EditablePaycheckPlanStorage;
+
+beforeEach(() => {
+  planStorage = createMemoryPlanStorage();
+});
+
+/** Renders the screen against the current storage stand-in. */
+function renderScreen(): void {
+  render(<PaycheckPreviewScreen planStorage={planStorage} />);
+}
 
 /*
  * `fireEvent` rather than user-event: the repository configures
@@ -13,14 +52,6 @@ function enterPaycheck(amount: string, eventDate = '2026-01-15'): void {
   fireEvent.change(screen.getByLabelText('Paycheck date'), { target: { value: eventDate } });
   fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 }
-
-/*
- * Saved plan settings are real browser storage, so each test starts from a
- * clean device rather than inheriting whatever the previous one typed.
- */
-afterEach(() => {
-  localStorage.clear();
-});
 
 /** Edits one plan field without pressing Preview. */
 function editPlan(label: string, value: string): void {
@@ -40,7 +71,7 @@ function renderedRows(): readonly (readonly string[])[] {
 
 describe('the paycheck preview screen', () => {
   it('shows the form before anything is previewed', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     expect(screen.getByLabelText('Paycheck amount')).toBeInTheDocument();
     expect(screen.getByLabelText('Paycheck date')).toBeInTheDocument();
@@ -54,7 +85,7 @@ describe('the paycheck preview screen', () => {
    * resolver or the executor changes an answer.
    */
   it('shows where a $2,000 paycheck goes', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     enterPaycheck('2000');
 
     expect(renderedRows()).toEqual([
@@ -72,7 +103,7 @@ describe('the paycheck preview screen', () => {
    * requirement does not.
    */
   it('recomputes through the domain when the amount changes', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     enterPaycheck('2000');
     expect(renderedRows()).toContainEqual(['Giving', '$200.00']);
@@ -88,7 +119,7 @@ describe('the paycheck preview screen', () => {
   });
 
   it('names destinations rather than showing bucket identifiers', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     enterPaycheck('2000');
 
     expect(within(screen.getByRole('table')).getByText('Emergency Fund')).toBeInTheDocument();
@@ -96,7 +127,7 @@ describe('the paycheck preview screen', () => {
   });
 
   it('shows the message the domain supplied when the amount is not a number', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     enterPaycheck('two thousand');
 
     expect(screen.getByRole('alert')).toHaveTextContent('That is not a valid dollar amount.');
@@ -104,7 +135,7 @@ describe('the paycheck preview screen', () => {
   });
 
   it('refuses a paycheck of zero', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     enterPaycheck('0');
 
     expect(screen.getByRole('alert')).toHaveTextContent(
@@ -113,7 +144,7 @@ describe('the paycheck preview screen', () => {
   });
 
   it('clears a previous error once a valid paycheck is previewed', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     enterPaycheck('nonsense');
     expect(screen.getByRole('alert')).toBeInTheDocument();
@@ -124,7 +155,7 @@ describe('the paycheck preview screen', () => {
   });
 
   it('replaces a stale preview with the error when input becomes invalid', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     enterPaycheck('2000');
     expect(screen.getByRole('table')).toBeInTheDocument();
@@ -136,7 +167,7 @@ describe('the paycheck preview screen', () => {
 
   /* A preview proposes; it does not save. There is nothing to press that would. */
   it('offers nothing that claims to save or move money', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     enterPaycheck('2000');
 
     expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Preview']);
@@ -144,7 +175,7 @@ describe('the paycheck preview screen', () => {
   });
 
   it('says plainly where the plan settings are kept', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     expect(screen.getByText('Plan settings are saved on this device.')).toBeInTheDocument();
     expect(
@@ -155,7 +186,7 @@ describe('the paycheck preview screen', () => {
 
 describe('editing the plan', () => {
   it('offers the three plan controls with their starting values', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     expect(screen.getByLabelText('Giving')).toHaveValue('10');
     expect(screen.getByLabelText('Emergency Fund')).toHaveValue('500.00');
@@ -168,7 +199,7 @@ describe('editing the plan', () => {
    * screen can multiply.
    */
   it('changes the preview when the giving percentage changes', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     enterPaycheck('2000');
     expect(renderedRows()).toContainEqual(['Giving', '$200.00']);
@@ -186,7 +217,7 @@ describe('editing the plan', () => {
   });
 
   it('changes the preview when the emergency-fund amount changes', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Giving', '12');
     editPlan('Emergency Fund', '600');
@@ -202,7 +233,7 @@ describe('editing the plan', () => {
   });
 
   it('renames the leftover destination in the result', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Everything left over goes to', 'Everyday spending');
     enterPaycheck('2000');
@@ -212,7 +243,7 @@ describe('editing the plan', () => {
   });
 
   it('explains a percentage it cannot use', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Giving', 'lots');
     enterPaycheck('2000');
@@ -223,7 +254,7 @@ describe('editing the plan', () => {
 
   /* The 0%-to-100% bound belongs to the domain, and its wording reaches the screen. */
   it('explains a percentage above 100', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Giving', '150');
     enterPaycheck('2000');
@@ -232,7 +263,7 @@ describe('editing the plan', () => {
   });
 
   it('explains a negative funding amount', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Emergency Fund', '-100');
     enterPaycheck('2000');
@@ -241,7 +272,7 @@ describe('editing the plan', () => {
   });
 
   it('explains a blank destination name', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Everything left over goes to', '  ');
     enterPaycheck('2000');
@@ -256,11 +287,11 @@ describe('remembering the plan', () => {
   /** Throws the screen away and builds a new one, as a reload would. */
   function reload(): void {
     cleanup();
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
   }
 
   it('brings the edited plan back on a fresh visit', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Giving', '12');
     editPlan('Emergency Fund', '600');
@@ -278,7 +309,7 @@ describe('remembering the plan', () => {
    * remembered answer: nothing about the previous result was stored.
    */
   it('previews the remembered plan through the whole domain path', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
 
     editPlan('Giving', '12');
     editPlan('Emergency Fund', '600');
@@ -297,10 +328,10 @@ describe('remembering the plan', () => {
   });
 
   it('returns to the starting plan once the device forgets it', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     editPlan('Giving', '12');
 
-    localStorage.clear();
+    planStorage.clear();
     reload();
 
     expect(screen.getByLabelText('Giving')).toHaveValue('10');
@@ -309,7 +340,7 @@ describe('remembering the plan', () => {
   });
 
   it('remembers nothing about the paycheck or its preview', () => {
-    render(<PaycheckPreviewScreen />);
+    renderScreen();
     enterPaycheck('1234');
 
     reload();

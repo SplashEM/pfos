@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_PAYCHECK_PLAN, type EditablePaycheckPlan } from './paycheck-plan';
 import {
-  clearEditablePaycheckPlan,
-  loadEditablePaycheckPlan,
-  saveEditablePaycheckPlan,
+  DEFAULT_PAYCHECK_PLAN,
+  type EditablePaycheckPlan,
+} from '@application/paycheck/paycheck-plan';
+
+import {
+  createLocalStoragePaycheckPlanStorage,
   PAYCHECK_PLAN_SETTINGS_VERSION,
   PAYCHECK_PLAN_STORAGE_KEY,
-} from './paycheck-plan-storage';
+} from './local-storage-paycheck-plan-storage';
+
+const storage = createLocalStoragePaycheckPlanStorage();
 
 const EDITED: EditablePaycheckPlan = {
   givingPercent: '12',
@@ -26,25 +30,25 @@ afterEach(() => {
 
 describe('loading saved preview settings', () => {
   it('uses the default plan when nothing is stored', () => {
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   it('returns a saved plan exactly as it was written', () => {
-    saveEditablePaycheckPlan(EDITED);
+    storage.save(EDITED);
 
-    expect(loadEditablePaycheckPlan()).toEqual(EDITED);
+    expect(storage.load()).toEqual(EDITED);
   });
 
   it('falls back to the defaults when the stored value is not JSON', () => {
     writeRaw('{ this is not json');
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   it('falls back to the defaults when the stored value is not an object', () => {
     writeRaw('"just a string"');
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   it('falls back to the defaults when the version does not match', () => {
@@ -55,13 +59,13 @@ describe('loading saved preview settings', () => {
       }),
     );
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   it('falls back to the defaults when the version is absent', () => {
     writeRaw(JSON.stringify(EDITED));
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   /*
@@ -78,7 +82,7 @@ describe('loading saved preview settings', () => {
       }),
     );
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   it('falls back to the defaults when a field is not text', () => {
@@ -91,7 +95,7 @@ describe('loading saved preview settings', () => {
       }),
     );
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   /*
@@ -106,15 +110,15 @@ describe('loading saved preview settings', () => {
       leftoverLabel: 'Somewhere',
     };
 
-    saveEditablePaycheckPlan(unusable);
+    storage.save(unusable);
 
-    expect(loadEditablePaycheckPlan()).toEqual(unusable);
+    expect(storage.load()).toEqual(unusable);
   });
 });
 
 describe('saving preview settings', () => {
   it('writes an application-owned record carrying its own version', () => {
-    saveEditablePaycheckPlan(EDITED);
+    storage.save(EDITED);
 
     const raw = localStorage.getItem(PAYCHECK_PLAN_STORAGE_KEY);
     expect(raw).not.toBeNull();
@@ -129,7 +133,7 @@ describe('saving preview settings', () => {
 
   /* Nothing resolved, allocated or confirmed may reach this slot. */
   it('writes exactly four fields and nothing financial', () => {
-    saveEditablePaycheckPlan(EDITED);
+    storage.save(EDITED);
 
     const raw = localStorage.getItem(PAYCHECK_PLAN_STORAGE_KEY) ?? '';
     const stored: unknown = JSON.parse(raw);
@@ -147,15 +151,15 @@ describe('saving preview settings', () => {
   });
 
   it('replaces the previous settings rather than accumulating them', () => {
-    saveEditablePaycheckPlan(EDITED);
-    saveEditablePaycheckPlan(DEFAULT_PAYCHECK_PLAN);
+    storage.save(EDITED);
+    storage.save(DEFAULT_PAYCHECK_PLAN);
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
     expect(localStorage.length).toBe(1);
   });
 
   it('uses one namespaced key', () => {
-    saveEditablePaycheckPlan(EDITED);
+    storage.save(EDITED);
 
     expect(localStorage.key(0)).toBe('pfos.preview-plan');
   });
@@ -163,15 +167,15 @@ describe('saving preview settings', () => {
 
 describe('clearing preview settings', () => {
   it('returns to the defaults', () => {
-    saveEditablePaycheckPlan(EDITED);
-    clearEditablePaycheckPlan();
+    storage.save(EDITED);
+    storage.clear();
 
-    expect(loadEditablePaycheckPlan()).toEqual(DEFAULT_PAYCHECK_PLAN);
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
   it('is harmless when nothing was saved', () => {
     expect(() => {
-      clearEditablePaycheckPlan();
+      storage.clear();
     }).not.toThrow();
   });
 });

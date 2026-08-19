@@ -1,26 +1,28 @@
-import { DEFAULT_PAYCHECK_PLAN, type EditablePaycheckPlan } from './paycheck-plan';
+import type { EditablePaycheckPlanStorage } from '@application/paycheck/editable-paycheck-plan-storage';
+import {
+  DEFAULT_PAYCHECK_PLAN,
+  type EditablePaycheckPlan,
+} from '@application/paycheck/paycheck-plan';
 
 /**
- * Remembers the three preview settings between visits.
+ * Keeps the three preview plan settings in browser local storage.
  *
- * This is preference storage, not PFOS financial persistence. What it holds is
- * the text a person typed into the plan controls — nothing resolved, nothing
- * allocated, nothing confirmed. No `ResolvedRuleSet`, `AllocationResult`,
- * `PlanSnapshot`, rule version, paycheck or audit record is stored, and none
- * may be added here: the moment a financial record needs to survive a reload,
- * it belongs behind a repository interface in the infrastructure layer, with the
- * snapshot and migration semantics that decision brings.
+ * This is the infrastructure half of `EditablePaycheckPlanStorage`: every call
+ * to `localStorage` and every line of JSON handling in PFOS lives here, which is
+ * where PFOS-ENG-00 §3 puts a storage implementation. The application layer
+ * holds the contract and knows nothing about browsers; the presentation layer
+ * calls the contract and never touches storage itself (§4.1).
  *
- * Losing this data costs a person thirty seconds of retyping. That is the whole
- * risk model, and it is why the implementation is deliberately this small.
+ * It is preference storage, not PFOS financial persistence. What it holds is the
+ * text a person typed into the plan controls — nothing resolved, allocated or
+ * confirmed. No `ResolvedRuleSet`, `AllocationResult`, `PlanSnapshot`, rule
+ * version, paycheck or audit record is stored, and none may be added here: the
+ * moment a financial record needs to survive a reload it belongs in its own
+ * contract, with the snapshot and migration semantics that decision brings.
  *
- * `localStorage` is read directly rather than through an interface. PFOS-ENG-00
- * §3 puts storage in the infrastructure layer, and real persistence will go
- * there; three strings of UI state do not earn a repository, a unit of work or
- * a migration path, and building one now would fix an architecture ahead of the
- * decision that should shape it. PFOS-ENG-00 §4.1 is still honoured where it
- * matters: the screen calls this application service rather than touching
- * storage itself. Deleting this file removes the feature and nothing else.
+ * Nothing migrates. A record this build does not recognise is discarded, which
+ * is the only handling a disposable preference needs, and is why there is no
+ * migration path, no compatibility reader and no version negotiation here.
  */
 
 /** The one key this slice owns, namespaced so nothing else collides with it. */
@@ -32,9 +34,7 @@ export const PAYCHECK_PLAN_STORAGE_KEY = 'pfos.preview-plan';
  * It exists so a record written by an older build can be recognised and
  * discarded rather than misread. It is not `ResolvedRuleSet.schemaVersion`, not
  * `PlanSnapshot.schemaVersion`, and not a domain persistence version: no
- * accepted contract is versioned here, no financial document is stored, and
- * nothing migrates. A stale record is thrown away, which is the only handling a
- * disposable preference needs.
+ * accepted contract is versioned here and no financial document is stored.
  */
 export const PAYCHECK_PLAN_SETTINGS_VERSION = 1;
 
@@ -44,6 +44,21 @@ interface StoredPaycheckPlan {
   readonly givingPercent: string;
   readonly emergencyFundPerPaycheck: string;
   readonly leftoverLabel: string;
+}
+
+/**
+ * Builds the browser-storage implementation of the plan-settings port.
+ *
+ * A factory rather than a class: there is no state to hold and nothing to
+ * configure, so this exists only to name the dependency at the composition root
+ * and to keep the contract swappable in a test.
+ */
+export function createLocalStoragePaycheckPlanStorage(): EditablePaycheckPlanStorage {
+  return {
+    load: loadEditablePaycheckPlan,
+    save: saveEditablePaycheckPlan,
+    clear: clearEditablePaycheckPlan,
+  };
 }
 
 /**
@@ -64,7 +79,7 @@ interface StoredPaycheckPlan {
  * a stale record are all the same answer to the only question being asked: is
  * there a usable saved plan?
  */
-export function loadEditablePaycheckPlan(): EditablePaycheckPlan {
+function loadEditablePaycheckPlan(): EditablePaycheckPlan {
   const raw = readRaw();
   if (raw === undefined) {
     return DEFAULT_PAYCHECK_PLAN;
@@ -89,7 +104,7 @@ export function loadEditablePaycheckPlan(): EditablePaycheckPlan {
  * correct for the rest of the session either way, and the next reload simply
  * starts from the defaults.
  */
-export function saveEditablePaycheckPlan(plan: EditablePaycheckPlan): void {
+function saveEditablePaycheckPlan(plan: EditablePaycheckPlan): void {
   const record: StoredPaycheckPlan = {
     schemaVersion: PAYCHECK_PLAN_SETTINGS_VERSION,
     givingPercent: plan.givingPercent,
@@ -105,7 +120,7 @@ export function saveEditablePaycheckPlan(plan: EditablePaycheckPlan): void {
 }
 
 /** Forgets the saved settings, so the next load starts from the defaults. */
-export function clearEditablePaycheckPlan(): void {
+function clearEditablePaycheckPlan(): void {
   try {
     localStorage.removeItem(PAYCHECK_PLAN_STORAGE_KEY);
   } catch {
