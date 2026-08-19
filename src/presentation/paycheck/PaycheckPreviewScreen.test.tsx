@@ -51,11 +51,13 @@ function createMemoryPlanStorage(): EditablePaycheckPlanStorage {
  */
 function createMemoryConfirmedPaycheckStore(): ConfirmedPaycheckStore & {
   fail: (summary?: string) => void;
+  breakReads: () => void;
   saved: () => number;
 } {
   const snapshots = new Map<string, PlanSnapshotRecord>();
   const allocations: AllocationRecord[] = [];
   let failure: string | undefined;
+  let unreadable = false;
 
   function refuse(summary: string) {
     return err(
@@ -67,9 +69,42 @@ function createMemoryConfirmedPaycheckStore(): ConfirmedPaycheckStore & {
     );
   }
 
+  /* The same order the real adapter answers with, so the double cannot drift. */
+  function confirmations() {
+    if (unreadable) {
+      return Promise.resolve(
+        err(
+          domainError({
+            code: 'APPLICATION_CONFIRMED_RECORD_MALFORMED',
+            category: 'PERSISTENCE',
+            summary: 'A saved paycheck could not be read and was left untouched.',
+          }),
+        ),
+      );
+    }
+
+    const ordered = [...allocations].sort(
+      (a, b) =>
+        b.confirmedAt.epochMilliseconds - a.confirmedAt.epochMilliseconds ||
+        b.id.localeCompare(a.id),
+    );
+
+    return Promise.resolve(
+      ok(
+        ordered.flatMap((allocation) => {
+          const snapshot = snapshots.get(allocation.planSnapshotId);
+          return snapshot === undefined ? [] : [{ snapshot, allocation }];
+        }),
+      ),
+    );
+  }
+
   return {
     fail: (summary = 'This paycheck was not saved. Nothing was recorded.') => {
       failure = summary;
+    },
+    breakReads: () => {
+      unreadable = true;
     },
     saved: () => allocations.length,
     saveConfirmation: (records) => {
@@ -96,20 +131,10 @@ function createMemoryConfirmedPaycheckStore(): ConfirmedPaycheckStore & {
         ),
       );
     },
-    readLatestConfirmation: () => {
-      const allocation = [...allocations].sort(
-        (a, b) =>
-          a.confirmedAt.epochMilliseconds - b.confirmedAt.epochMilliseconds ||
-          a.id.localeCompare(b.id),
-      )[allocations.length - 1];
-      const snapshot =
-        allocation === undefined ? undefined : snapshots.get(allocation.planSnapshotId);
-
-      return Promise.resolve(
-        ok(
-          allocation === undefined || snapshot === undefined ? undefined : { snapshot, allocation },
-        ),
-      );
+    readConfirmations: confirmations,
+    readLatestConfirmation: async () => {
+      const all = await confirmations();
+      return all.ok ? ok(all.value[0]) : all;
     },
     readPlanSnapshot: (snapshotId) => Promise.resolve(ok(snapshots.get(snapshotId))),
   };
@@ -740,9 +765,7 @@ describe('confirming a paycheck', () => {
     enterPaycheck('2000');
 
     expect(confirmedPaychecks.saved()).toBe(0);
-    expect(
-      screen.queryByRole('region', { name: 'Latest confirmed paycheck' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Confirmed paychecks' })).not.toBeInTheDocument();
   });
 
   it('offers to confirm once a preview is on screen', () => {
@@ -770,7 +793,7 @@ describe('confirming a paycheck', () => {
     enterPaycheck('2000');
     await confirmPaycheckOnScreen();
 
-    expect(rowsUnder('Latest confirmed paycheck')).toEqual([
+    expect(rowsUnder('Confirmed paychecks')).toEqual([
       ['bucket-giving', '$200.00'],
       ['bucket-emergency-fund', '$500.00'],
       ['bucket-leftover', '$1,300.00'],
@@ -782,7 +805,7 @@ describe('confirming a paycheck', () => {
     enterPaycheck('2000');
     await confirmPaycheckOnScreen();
 
-    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+    const saved = screen.getByRole('region', { name: 'Confirmed paychecks' });
 
     expect(
       within(saved).getByText('Priority 1 · Requested $500.00 · Funded in full.'),
@@ -795,7 +818,7 @@ describe('confirming a paycheck', () => {
     enterPaycheck('2000');
     await confirmPaycheckOnScreen();
 
-    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+    const saved = screen.getByRole('region', { name: 'Confirmed paychecks' });
 
     expect(within(saved).getByText(/\$2,000\.00 on 2026-01-15/)).toBeInTheDocument();
   });
@@ -805,7 +828,7 @@ describe('confirming a paycheck', () => {
     enterPaycheck('2000');
     await confirmPaycheckOnScreen();
 
-    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+    const saved = screen.getByRole('region', { name: 'Confirmed paychecks' });
 
     expect(within(saved).getByText('Total allocated').closest('tr')).toHaveTextContent('$2,000.00');
     expect(within(saved).getByText('Unallocated').closest('tr')).toHaveTextContent('$0.00');
@@ -835,7 +858,7 @@ describe('confirming a paycheck', () => {
     editPlan('Priority 2 name', 'Camera');
     press('Move up', 1);
 
-    expect(rowsUnder('Latest confirmed paycheck')).toEqual([
+    expect(rowsUnder('Confirmed paychecks')).toEqual([
       ['bucket-giving', '$200.00'],
       ['bucket-emergency-fund', '$500.00'],
       ['bucket-priority-2', '$300.00'],
@@ -856,10 +879,10 @@ describe('confirming a paycheck', () => {
 
     editPlan('Priority 2 name', 'Vacation');
 
-    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+    const saved = screen.getByRole('region', { name: 'Confirmed paychecks' });
 
     expect(within(saved).queryByText('Vacation')).not.toBeInTheDocument();
-    expect(rowsUnder('Latest confirmed paycheck')).toContainEqual(['bucket-priority-2', '$300.00']);
+    expect(rowsUnder('Confirmed paychecks')).toContainEqual(['bucket-priority-2', '$300.00']);
   });
 
   /* The stored record survives the screen being thrown away and rebuilt. */
@@ -871,9 +894,9 @@ describe('confirming a paycheck', () => {
     cleanup();
     renderScreen();
 
-    await screen.findByRole('region', { name: 'Latest confirmed paycheck' });
+    await screen.findByRole('region', { name: 'Confirmed paychecks' });
 
-    expect(rowsUnder('Latest confirmed paycheck')).toEqual([
+    expect(rowsUnder('Confirmed paychecks')).toEqual([
       ['bucket-giving', '$200.00'],
       ['bucket-emergency-fund', '$500.00'],
       ['bucket-leftover', '$1,300.00'],
@@ -955,9 +978,7 @@ describe('confirming a paycheck', () => {
     expect(
       screen.queryByText('Paycheck confirmed and saved on this device.'),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('region', { name: 'Latest confirmed paycheck' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Confirmed paychecks' })).not.toBeInTheDocument();
   });
 
   /* Constitution Principle 8: planning is not payment. */
@@ -970,6 +991,194 @@ describe('confirming a paycheck', () => {
       /transferred|funds moved|transaction complete|bank updated|payment sent/i,
     );
     expect(screen.getAllByText(/PFOS does not move money/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('the confirmed paycheck history', () => {
+  function press(name: string, nth = 0): void {
+    const button = screen.getAllByRole('button', { name })[nth];
+    if (button === undefined) {
+      throw new Error(`No button named ${name} at position ${String(nth)}.`);
+    }
+    fireEvent.click(button);
+  }
+
+  /** The rows of the history list, as "date amount" strings, in display order. */
+  function historyEntries(): readonly string[] {
+    const section = screen.queryByRole('region', { name: 'Confirmed paychecks' });
+    if (section === null) {
+      return [];
+    }
+
+    return [...section.querySelectorAll('.history button')].map((entry) =>
+      (entry.textContent ?? '').trim(),
+    );
+  }
+
+  /** The allocation rows of the opened confirmation, as [label, amount] pairs. */
+  function openedRows(): readonly (readonly string[])[] {
+    const section = screen.getByRole('region', { name: 'Confirmed paychecks' });
+
+    return [...section.querySelectorAll('tbody tr')].map((row) =>
+      [...row.querySelectorAll('th, td')].map((cell) => {
+        const label = cell.querySelector('.destination');
+        return (label ?? cell).textContent ?? '';
+      }),
+    );
+  }
+
+  it('shows nothing before any paycheck is confirmed', () => {
+    renderScreen();
+
+    expect(screen.queryByRole('region', { name: 'Confirmed paychecks' })).not.toBeInTheDocument();
+    expect(historyEntries()).toEqual([]);
+  });
+
+  it('shows one entry after one confirmation', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    expect(historyEntries()).toEqual(['2026-01-15$2,000.00']);
+  });
+
+  /* A second confirmation must not replace the first. */
+  it('shows both paychecks after a second confirmation', async () => {
+    renderScreen();
+    enterPaycheck('2000', '2026-01-15');
+    await confirmPaycheckOnScreen();
+
+    enterPaycheck('1800', '2026-01-29');
+    await confirmPaycheckOnScreen();
+
+    expect(historyEntries()).toHaveLength(2);
+  });
+
+  /* Newest first, and the new one is open without anything being clicked. */
+  it('puts the newest paycheck first and opens it', async () => {
+    renderScreen();
+    enterPaycheck('2000', '2026-01-15');
+    await confirmPaycheckOnScreen();
+
+    enterPaycheck('1800', '2026-01-29');
+    await confirmPaycheckOnScreen();
+
+    expect(historyEntries()[0]).toBe('2026-01-29$1,800.00');
+    expect(screen.getByText(/\$1,800\.00 on 2026-01-29/)).toBeInTheDocument();
+  });
+
+  it('adds a new confirmation without the screen being reloaded', async () => {
+    renderScreen();
+    enterPaycheck('2000', '2026-01-15');
+    await confirmPaycheckOnScreen();
+
+    expect(historyEntries()).toHaveLength(1);
+
+    enterPaycheck('1800', '2026-01-29');
+    await confirmPaycheckOnScreen();
+
+    expect(historyEntries()).toHaveLength(2);
+  });
+
+  it('restores the whole list after a reload', async () => {
+    renderScreen();
+    enterPaycheck('2000', '2026-01-15');
+    await confirmPaycheckOnScreen();
+    enterPaycheck('1800', '2026-01-29');
+    await confirmPaycheckOnScreen();
+
+    cleanup();
+    renderScreen();
+
+    await screen.findByRole('region', { name: 'Confirmed paychecks' });
+
+    expect(historyEntries()).toEqual(['2026-01-29$1,800.00', '2026-01-15$2,000.00']);
+  });
+
+  /*
+   * The mandatory case: an older paycheck opened after the plan has moved on
+   * still reads as the allocation that was confirmed.
+   */
+  it('opens an older paycheck and shows what was confirmed then', async () => {
+    renderScreen();
+
+    /* Paycheck A: $2,000 with two priorities. */
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    enterPaycheck('2000', '2026-01-15');
+    await confirmPaycheckOnScreen();
+
+    /* The plan changes materially, and paycheck B is confirmed under it. */
+    editPlan('Giving', '20');
+    editPlan('Priority 1 amount', '900');
+    enterPaycheck('2500', '2026-01-29');
+    await confirmPaycheckOnScreen();
+
+    expect(openedRows()).toEqual([
+      ['bucket-giving', '$500.00'],
+      ['bucket-emergency-fund', '$900.00'],
+      ['bucket-priority-2', '$300.00'],
+      ['bucket-leftover', '$800.00'],
+    ]);
+
+    /* Opening A shows A, untouched by everything that happened since. */
+    fireEvent.click(screen.getByRole('button', { name: /2026-01-15/ }));
+
+    expect(openedRows()).toEqual([
+      ['bucket-giving', '$200.00'],
+      ['bucket-emergency-fund', '$500.00'],
+      ['bucket-priority-2', '$300.00'],
+      ['bucket-leftover', '$1,000.00'],
+    ]);
+
+    const section = screen.getByRole('region', { name: 'Confirmed paychecks' });
+    expect(within(section).getByText('Total allocated').closest('tr')).toHaveTextContent(
+      '$2,000.00',
+    );
+    expect(
+      within(section).getByText('Priority 1 · Requested $500.00 · Funded in full.'),
+    ).toBeInTheDocument();
+  });
+
+  it('marks the paycheck being read', async () => {
+    renderScreen();
+    enterPaycheck('2000', '2026-01-15');
+    await confirmPaycheckOnScreen();
+    enterPaycheck('1800', '2026-01-29');
+    await confirmPaycheckOnScreen();
+
+    fireEvent.click(screen.getByRole('button', { name: /2026-01-15/ }));
+
+    expect(screen.getByRole('button', { name: /2026-01-15/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: /2026-01-29/ })).toHaveAttribute(
+      'aria-current',
+      'false',
+    );
+  });
+
+  /*
+   * A history that quietly omitted a paycheck would look exactly like one that
+   * never had it, so an unreadable record is reported and nothing is listed.
+   */
+  it('reports a failure rather than showing part of the history', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    confirmedPaychecks.breakReads();
+    cleanup();
+    renderScreen();
+
+    await screen.findByRole('alert');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'A saved paycheck could not be read and was left untouched.',
+    );
+    expect(screen.queryByRole('region', { name: 'Confirmed paychecks' })).not.toBeInTheDocument();
   });
 });
 

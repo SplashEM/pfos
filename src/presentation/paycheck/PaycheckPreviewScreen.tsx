@@ -89,16 +89,22 @@ export function PaycheckPreviewScreen({
   const [previewedFrom, setPreviewedFrom] = useState<string | undefined>(undefined);
   const [confirming, setConfirming] = useState(false);
   /*
-   * The stored records. Everything shown for a confirmed paycheck is read from
-   * them and from nothing else — not the plan being edited above — so renaming
-   * a priority cannot change what a saved paycheck says (Decision 098
-   * holding 4).
+   * The stored records, newest first. Everything shown for a confirmed paycheck
+   * is read from them and from nothing else — not the plan being edited above —
+   * so renaming a priority cannot change what a saved paycheck says (Decision
+   * 098 holding 4).
    */
-  const [confirmed, setConfirmed] = useState<ConfirmedPaycheckRecords | undefined>(undefined);
+  const [confirmed, setConfirmed] = useState<readonly ConfirmedPaycheckRecords[]>([]);
+  /*
+   * Which one is open. Unset means the newest, so a fresh confirmation is the
+   * one on screen without anything having to choose it.
+   */
+  const [openedId, setOpenedId] = useState<string | undefined>(undefined);
   const [justConfirmed, setJustConfirmed] = useState(false);
 
   const priorities = orderedPriorities(plan);
-  const confirmation = confirmed === undefined ? undefined : toConfirmedPaycheckView(confirmed);
+  const history = confirmed.map(toConfirmedPaycheckView);
+  const opened = history.find((entry) => entry.allocationId === openedId) ?? history[0];
   const currentInputs = JSON.stringify({ plan, amount, eventDate });
   const confirmable = preview !== undefined && previewedFrom === currentInputs;
 
@@ -119,10 +125,24 @@ export function PaycheckPreviewScreen({
   useEffect(() => {
     let cancelled = false;
 
-    void confirmedPaychecks.readLatestConfirmation().then((latest) => {
-      if (!cancelled && latest.ok) {
-        setConfirmed(latest.value);
+    void confirmedPaychecks.readConfirmations().then((stored) => {
+      if (cancelled) {
+        return;
       }
+
+      if (stored.ok) {
+        setConfirmed(stored.value);
+        return;
+      }
+
+      /*
+       * A stored record that cannot be read is reported rather than hidden, and
+       * no part of the history is shown in its place: a list missing a paycheck
+       * looks exactly like a list that never had one. Decision 098 holding 8
+       * leaves the stored data untouched, so nothing here retries or repairs.
+       */
+      setConfirmed([]);
+      setError(stored.error.summary);
     });
 
     return () => {
@@ -194,21 +214,23 @@ export function PaycheckPreviewScreen({
 
     setError(undefined);
     setJustConfirmed(true);
-    await showLatestConfirmation();
+    await showConfirmedPaychecks();
   }
 
   /**
-   * Reloads the saved paycheck from storage.
+   * Reloads the saved paychecks from storage.
    *
-   * Reading it back rather than rendering what was just written keeps one path
-   * to the screen: what a person sees after confirming is the stored record,
-   * the same one they will see after a reload.
+   * Reading them back rather than rendering what was just written keeps one
+   * path to the screen: what a person sees after confirming is the stored
+   * record, the same one they will see after a reload.
    */
-  async function showLatestConfirmation(): Promise<void> {
-    const latest = await confirmedPaychecks.readLatestConfirmation();
+  async function showConfirmedPaychecks(): Promise<void> {
+    const stored = await confirmedPaychecks.readConfirmations();
 
-    if (latest.ok) {
-      setConfirmed(latest.value);
+    if (stored.ok) {
+      setConfirmed(stored.value);
+      /* The one just confirmed is the newest, so nothing needs choosing. */
+      setOpenedId(undefined);
       return;
     }
 
@@ -217,8 +239,8 @@ export function PaycheckPreviewScreen({
      * nothing is shown in its place. Decision 098 holding 8 leaves the stored
      * data untouched, so nothing here retries, repairs or clears it.
      */
-    setConfirmed(undefined);
-    setError(latest.error.summary);
+    setConfirmed([]);
+    setError(stored.error.summary);
   }
 
   return (
@@ -470,13 +492,34 @@ export function PaycheckPreviewScreen({
         </section>
       )}
 
-      {confirmation !== undefined && (
+      {opened !== undefined && (
         <section aria-labelledby="confirmed-heading">
-          <h2 id="confirmed-heading">Latest confirmed paycheck</h2>
+          <h2 id="confirmed-heading">Confirmed paychecks</h2>
+
+          {/*
+           * One row per confirmed paycheck, newest first, in the order the
+           * store returned them. Nothing is sorted here: the order is a
+           * property of the records, decided once where they are read.
+           */}
+          <ul className="history">
+            {history.map((entry) => (
+              <li key={entry.allocationId}>
+                <button
+                  type="button"
+                  aria-current={entry.allocationId === opened.allocationId}
+                  onClick={() => {
+                    setOpenedId(entry.allocationId);
+                  }}
+                >
+                  <span className="history-date">{entry.paycheckDate}</span>
+                  <span className="amount">{entry.paycheckAmount}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
 
           <p className="note">
-            {confirmation.paycheckAmount} on {confirmation.paycheckDate} · Confirmed{' '}
-            {confirmation.confirmedAt}
+            {opened.paycheckAmount} on {opened.paycheckDate} · Confirmed {opened.confirmedAt}
           </p>
 
           <table>
@@ -487,7 +530,7 @@ export function PaycheckPreviewScreen({
               </tr>
             </thead>
             <tbody>
-              {confirmation.lines.map((line) => (
+              {opened.lines.map((line) => (
                 <tr key={line.bucketId}>
                   <th scope="row">
                     <span className="destination">{line.label}</span>
@@ -500,17 +543,17 @@ export function PaycheckPreviewScreen({
             <tfoot>
               <tr>
                 <th scope="row">Total allocated</th>
-                <td className="amount">{confirmation.totalAllocated}</td>
+                <td className="amount">{opened.totalAllocated}</td>
               </tr>
               <tr>
                 <th scope="row">Unallocated</th>
-                <td className="amount">{confirmation.unallocated}</td>
+                <td className="amount">{opened.unallocated}</td>
               </tr>
             </tfoot>
           </table>
 
           {/*
-           * The plan may have changed since. This paycheck shows what was
+           * The plan may have changed since. Each paycheck shows what was
            * confirmed at the time and is not recalculated (Decision 098
            * holding 4).
            */}

@@ -259,13 +259,13 @@ test('a person can confirm a paycheck and still see it after changing the plan',
   await expect(previewRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
 
   /* Nothing is stored by looking. */
-  await expect(page.getByRole('region', { name: 'Latest confirmed paycheck' })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Confirmed paychecks' })).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Confirm paycheck' }).click();
 
   await expect(page.getByText('Paycheck confirmed and saved on this device.')).toBeVisible();
 
-  const saved = page.getByRole('region', { name: 'Latest confirmed paycheck' });
+  const saved = page.getByRole('region', { name: 'Confirmed paychecks' });
   const savedRows = saved.getByRole('row');
 
   /* A saved paycheck names destinations by the identifier its record stores. */
@@ -333,7 +333,7 @@ test('renaming a priority does not rewrite a paycheck already confirmed', async 
   await page.getByRole('button', { name: 'Confirm paycheck' }).click();
   await expect(page.getByText('Paycheck confirmed and saved on this device.')).toBeVisible();
 
-  const saved = page.getByRole('region', { name: 'Latest confirmed paycheck' });
+  const saved = page.getByRole('region', { name: 'Confirmed paychecks' });
   const savedRows = saved.getByRole('row');
 
   await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
@@ -354,6 +354,76 @@ test('renaming a priority does not rewrite a paycheck already confirmed', async 
 
   await expect(saved).not.toContainText('Vacation');
   await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
+});
+
+/*
+ * Two paydays, in a real browser. The second paycheck must not replace the
+ * first: both stay, newest first, and opening the older one shows the
+ * allocation that was confirmed then rather than anything recalculated from
+ * the plan as it stands now.
+ */
+test('a person can see every paycheck they have confirmed', async ({ page }) => {
+  await page.goto('/');
+
+  /* Paycheck A: $2,000 under Giving 10%, Emergency Fund $500, Laptop $300. */
+  await page.getByRole('button', { name: 'Add priority' }).click();
+  await page.getByLabel('Priority 2 name').fill('Laptop');
+  await page.getByLabel('Priority 2 amount').fill('300');
+
+  await page.getByLabel('Paycheck amount').fill('2000');
+  await page.getByLabel('Paycheck date').fill('2026-01-15');
+  await page.getByRole('button', { name: 'Preview' }).click();
+  await page.getByRole('button', { name: 'Confirm paycheck' }).click();
+  await expect(page.getByText('Paycheck confirmed and saved on this device.')).toBeVisible();
+
+  const history = page.getByRole('region', { name: 'Confirmed paychecks' });
+  const entries = history.locator('.history button');
+
+  await expect(entries).toHaveCount(1);
+
+  /* The plan changes materially, and paycheck B is confirmed under it. */
+  await page.getByLabel('Giving').fill('20');
+  await page.getByLabel('Priority 1 amount').fill('900');
+
+  await page.getByLabel('Paycheck amount').fill('2500');
+  await page.getByLabel('Paycheck date').fill('2026-01-29');
+  await page.getByRole('button', { name: 'Preview' }).click();
+  await page.getByRole('button', { name: 'Confirm paycheck' }).click();
+
+  await expect(entries).toHaveCount(2);
+
+  /* Newest first, and the new one is what is open. */
+  await expect(entries.first()).toContainText('2026-01-29');
+  await expect(entries.first()).toContainText('$2,500.00');
+  await expect(entries.nth(1)).toContainText('2026-01-15');
+
+  const savedRows = history.getByRole('row');
+  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$500.00');
+
+  /* Opening paycheck A shows what was confirmed then. */
+  await entries.nth(1).click();
+
+  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'bucket-leftover' })).toContainText('$1,000.00');
+  await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
+  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText(
+    'Priority 1 · Requested $500.00 · Funded in full.',
+  );
+
+  /* Both survive a real reload, in the same order. */
+  await page.reload();
+
+  await expect(entries).toHaveCount(2);
+  await expect(entries.first()).toContainText('2026-01-29');
+  await expect(entries.nth(1)).toContainText('2026-01-15');
+
+  /* And the older one still reads as it did. */
+  await entries.nth(1).click();
+
+  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
 });
 
