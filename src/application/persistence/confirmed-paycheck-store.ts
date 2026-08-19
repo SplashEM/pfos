@@ -63,6 +63,21 @@ export interface ConfirmedPaycheckStore {
   ): Promise<Result<ConfirmedPaycheckRecords | undefined, DomainError>>;
 
   /**
+   * Reads the most recently confirmed paycheck, if there is one.
+   *
+   * "Most recent" is the greatest `confirmedAt`, with the record identifier
+   * breaking a tie, so the answer is a total order rather than whatever order
+   * the database happens to return — PFOS-ENG-02 §68 forbids depending on
+   * retrieval order and PFOS-ENG-00 §32 Invariant 11 forbids storage ordering
+   * from altering a result.
+   *
+   * This is a screen's question, not a history API. It returns one confirmation
+   * or none, and there is deliberately no listing, paging or date range behind
+   * it.
+   */
+  readLatestConfirmation(): Promise<Result<ConfirmedPaycheckRecords | undefined, DomainError>>;
+
+  /**
    * Reads one Plan Snapshot on its own.
    *
    * Present so that the atomicity of `saveConfirmation` is observable: after a

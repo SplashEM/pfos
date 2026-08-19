@@ -58,6 +58,16 @@ const PLAN_SNAPSHOT_STORE = 'plan-snapshots';
 const ALLOCATION_STORE = 'allocations';
 
 /**
+ * Orders confirmations by when they were confirmed, then by identifier.
+ *
+ * The identifier is part of the key so the order is total: two confirmations
+ * recorded in the same millisecond still have one answer to which is later, and
+ * that answer does not depend on how the database returns rows (PFOS-ENG-02
+ * §68; PFOS-ENG-00 §32 Invariant 11).
+ */
+const CONFIRMED_AT_INDEX = 'by-confirmed-at';
+
+/**
  * Builds the IndexedDB implementation of the confirmed-paycheck port.
  *
  * A factory rather than a class: it holds no state, and it exists to name the
@@ -69,6 +79,7 @@ export function createIndexedDbConfirmedPaycheckStore(
   return {
     saveConfirmation: (records) => saveConfirmation(databaseName, records),
     readConfirmation: (allocationId) => readConfirmation(databaseName, allocationId),
+    readLatestConfirmation: () => readLatestConfirmation(databaseName),
     readPlanSnapshot: (snapshotId) => readPlanSnapshot(databaseName, snapshotId),
   };
 }
@@ -205,6 +216,55 @@ async function readConfirmation(
   return ok({ snapshot: snapshot.value, allocation: allocation.value });
 }
 
+/**
+ * Reads the most recently confirmed paycheck.
+ *
+ * The cursor walks the confirmation index backwards and stops at the first
+ * entry, so the newest record is found without loading the others. A database
+ * that has never stored a confirmation answers `undefined`, which is not a
+ * failure.
+ */
+async function readLatestConfirmation(
+  databaseName: string,
+): Promise<Result<ConfirmedPaycheckRecords | undefined, DomainError>> {
+  let latestId: string | undefined;
+
+  try {
+    const database = await openDatabase(databaseName);
+
+    try {
+      latestId = await new Promise<string | undefined>((resolve, reject) => {
+        const request = database
+          .transaction([ALLOCATION_STORE], 'readonly')
+          .objectStore(ALLOCATION_STORE)
+          .index(CONFIRMED_AT_INDEX)
+          .openCursor(null, 'prev');
+
+        request.onsuccess = () => {
+          const cursor = request.result;
+          resolve(cursor === null ? undefined : String(cursor.primaryKey));
+        };
+        request.onerror = () => {
+          reject(request.error ?? new Error('The read failed.'));
+        };
+      });
+    } finally {
+      database.close();
+    }
+  } catch (cause) {
+    return err(
+      domainError({
+        code: APPLICATION_ERROR_CODES.APPLICATION_CONFIRMATION_READ_FAILED,
+        category: ERROR_CATEGORIES.PERSISTENCE,
+        summary: 'Saved paychecks could not be reached.',
+        details: describe(cause),
+      }),
+    );
+  }
+
+  return latestId === undefined ? ok(undefined) : readConfirmation(databaseName, latestId);
+}
+
 /** Reads one Plan Snapshot. */
 async function readPlanSnapshot(
   databaseName: string,
@@ -287,7 +347,8 @@ function openDatabase(databaseName: string): Promise<IDBDatabase> {
         database.createObjectStore(PLAN_SNAPSHOT_STORE, { keyPath: 'id' });
       }
       if (!database.objectStoreNames.contains(ALLOCATION_STORE)) {
-        database.createObjectStore(ALLOCATION_STORE, { keyPath: 'id' });
+        const allocations = database.createObjectStore(ALLOCATION_STORE, { keyPath: 'id' });
+        allocations.createIndex(CONFIRMED_AT_INDEX, ['confirmedAt.epochMilliseconds', 'id']);
       }
     };
 

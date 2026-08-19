@@ -1,8 +1,11 @@
-import type { AllocationExplanation } from '@domain/allocation/contracts/allocation-explanation';
 import { ALLOCATION_EXPLANATION_CODES } from '@domain/allocation/contracts/allocation-explanation';
 import type { AllocationIncomeEvent } from '@domain/allocation/contracts/allocation-income-event';
-import type { AllocationLine } from '@domain/allocation/contracts/allocation-result';
+import type {
+  AllocationLine,
+  AllocationResult,
+} from '@domain/allocation/contracts/allocation-result';
 import { executeAllocation } from '@domain/allocation/services/execute-allocation';
+import type { ResolvedRuleSet } from '@domain/rules/contracts/resolved-rule-set';
 import { resolveRuleSet } from '@domain/rules/services/resolve-rule-set';
 import { financialDate, type FinancialDate } from '@domain/shared/dates/financial-date';
 import { timestamp } from '@domain/shared/dates/timestamp';
@@ -16,6 +19,7 @@ import type { Money } from '@domain/shared/money/money';
 import { parseUsd } from '@domain/shared/money/money-parse';
 
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
+import { explanationText, toPersistedExplanation } from './allocation-explanation-text';
 import {
   buildAuthoredPaycheckPlan,
   SAMPLE_INCOME_SOURCE,
@@ -52,6 +56,23 @@ export interface PaycheckPreviewLine {
   readonly explanation: string;
 }
 
+/**
+ * The exact proposal a person is looking at, kept so it can be confirmed.
+ *
+ * A confirmed paycheck must record what was actually proposed, so confirmation
+ * stores these values rather than resolving the plan a second time. Between the
+ * preview and the click, the plan on screen may have changed; re-resolving then
+ * would record an allocation nobody saw.
+ *
+ * It is opaque to the screen holding it. The presentation layer keeps it and
+ * hands it back, and performs no calculation on it (CLAUDE.md).
+ */
+export interface ConfirmablePaycheck {
+  readonly resolvedRuleSet: ResolvedRuleSet;
+  readonly allocation: AllocationResult;
+  readonly incomeEvent: AllocationIncomeEvent;
+}
+
 /** The answer to "where should this paycheck go?", formatted for display. */
 export interface PaycheckPreview {
   readonly lines: readonly PaycheckPreviewLine[];
@@ -65,6 +86,8 @@ export interface PaycheckPreview {
    * sentence telling them so.
    */
   readonly priorityFundingSummary?: string | undefined;
+  /** What confirming this preview would record. Handed back to `confirmPaycheck`. */
+  readonly confirmable: ConfirmablePaycheck;
 }
 
 /**
@@ -139,11 +162,16 @@ export function previewPaycheckAllocation(
       bucketId: line.bucketId,
       label: labelFor(authored.value, line.bucketId),
       amount: formatUsd(line.amount),
-      explanation: explain(line.explanation, line.amount),
+      explanation: explanationText(toPersistedExplanation(line.explanation), line.amount.cents),
     })),
     totalAllocated: formatUsd(allocation.value.totalAllocated),
     unallocated: formatUsd(allocation.value.unallocated),
     priorityFundingSummary: priorityFundingSummary.value,
+    confirmable: {
+      resolvedRuleSet: plan.value,
+      allocation: allocation.value,
+      incomeEvent: event.value,
+    },
   });
 }
 
@@ -205,66 +233,6 @@ function labelFor(authored: AuthoredPaycheckPlan, bucketId: EntityId): string {
 }
 
 /**
- * Turns the engine's structured explanation facts into a sentence.
- *
- * PFOS-ENG-02 §52 keeps explanations as structured facts and records that "the
- * presentation layer may convert these facts into natural-language text". This
- * is that conversion, done once here rather than in a component, so a screen
- * never reconstructs financial reasoning and every surface says the same thing.
- *
- * Nothing is recomputed. Every figure below is either a value the engine
- * carried on the explanation or the amount already on the line, so the words
- * cannot drift from the arithmetic they describe.
- *
- * Nothing is promised, either. No sentence says what a later paycheck will do,
- * what is still owed, or what a person should change: the shortfall, advisor and
- * coaching behaviours those would imply do not exist.
- */
-function explain(explanation: AllocationExplanation, allocated: Money): string {
-  switch (explanation.code) {
-    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_OBLIGATION_RATE:
-      return `${formatPercent(explanation.rateBasisPoints)} of this paycheck.`;
-
-    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_FUNDED_IN_FULL:
-      return (
-        `Priority ${String(explanation.rank)} · ` +
-        `Requested ${formatUsd(explanation.requestedAmount)} · Funded in full.`
-      );
-
-    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_POOL_EXHAUSTED:
-      return (
-        `Priority ${String(explanation.rank)} · ` +
-        `Requested ${formatUsd(explanation.requestedAmount)} · ` +
-        `Only ${formatUsd(allocated)} remained when this priority was reached.`
-      );
-
-    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_LEFTOVER_REMAINDER:
-      return 'Receives whatever remains after everything above.';
-  }
-}
-
-/**
- * A rate as a percentage, for reading.
- *
- * The arithmetic is on integers: basis points split into whole percent and
- * hundredths, so no binary fraction reaches the text. Trailing zeros are
- * dropped, which is why 1,000 basis points reads as 10% rather than 10.00%.
- */
-function formatPercent(rateBasisPoints: number): string {
-  const whole = Math.trunc(rateBasisPoints / 100);
-  const hundredths = rateBasisPoints % 100;
-
-  if (hundredths === 0) {
-    return `${String(whole)}%`;
-  }
-
-  const padded = String(hundredths).padStart(2, '0');
-  const trimmed = padded.endsWith('0') ? padded.slice(0, 1) : padded;
-
-  return `${String(whole)}.${trimmed}%`;
-}
-
-/**
  * Says whether the priorities as a group asked for more than this paycheck gave
  * them.
  *
@@ -275,13 +243,13 @@ function formatPercent(rateBasisPoints: number): string {
  * whether the plan as a whole fit.
  *
  * Nothing new is computed about the allocation. Both totals are sums of facts
- * the engine already emitted — the requested amounts it carried on the
- * explanations and the amounts it allocated — added with the shared Money
+ * the engine already emitted â€” the requested amounts it carried on the
+ * explanations and the amounts it allocated â€” added with the shared Money
  * arithmetic, so no dollars are handled as JavaScript numbers and neither total
  * can disagree with the rows beneath it.
  *
  * Only the two sums are stated. What the difference between them means is a
- * shortfall question, and PFOS-ENG-02 §41's shortfall behaviour is not
+ * shortfall question, and PFOS-ENG-02 Â§41's shortfall behaviour is not
  * implemented: nothing here records an unmet amount, carries anything into a
  * later paycheck, grades the plan or suggests a change. It describes one
  * execution, in the past tense, and stops.
