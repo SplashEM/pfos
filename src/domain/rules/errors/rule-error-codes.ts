@@ -19,10 +19,16 @@
  * failures assigned to the Rule Engine by Decision 071 "Validation ownership",
  * the two top-priority failures named by Decision 076, the effective-period
  * range failure named by Decision 078, the duplicate effective start named by
- * Decision 079, and the duplicate authored scope authorised by Decision 084.
+ * Decision 079, the duplicate authored scope authorised by Decision 084, and
+ * the duplicate funding sequence whose behaviour Decision 097 specified.
  * The remaining hard-validation codes in PFOS-ENG-01 §21.1 arrive with the
  * milestone phase that implements the validation behind them, so that no code
  * is published before the rule it reports is specified.
+ *
+ * One code reports capability rather than a rule. RULE_RESOLUTION_NOT_SUPPORTED
+ * refuses an input whose resolution would require answering a question no
+ * accepted source has settled, following the treatment the Allocation Engine
+ * already established for stages and strategies it cannot yet execute.
  */
 export const RULE_ERROR_CODES = {
   /*
@@ -125,6 +131,61 @@ export const RULE_ERROR_CODES = {
    * than reportable.
    */
   RULE_DUPLICATE_AUTHORED_SCOPE: 'RULE_DUPLICATE_AUTHORED_SCOPE',
+
+  /*
+   * Two funding rules resolved together claim the same `sequence`
+   * (Decision 097; Decision 074; Decision 080).
+   *
+   * `ResolvedFundingRule.sequence` is the competition order of distinct buckets
+   * for the same money, and Decision 074 classifies it as a financially
+   * meaningful ordering that Decision 090 expressly preserved. Decision 097
+   * supplies its authored source and requires values to be distinct across the
+   * funding rules resolved into one `ResolvedRuleSet`.
+   *
+   * Uniqueness is forced rather than chosen. Equal values leave the order
+   * between two buckets undetermined, and every tie-break that could settle it
+   * is already excluded — an identifier is opaque under PFOS-ENG-00 §14, and
+   * Decision 080 forbids array position, repository order and storage order —
+   * so a duplicate makes the resolved ordering non-deterministic against
+   * Constitution Principle 18 and PFOS-ENG-01 §26. Decision 076 reached the
+   * identical conclusion for top-priority rank.
+   *
+   * Uniqueness is the only constraint. Sequences need not be positive,
+   * contiguous or start at one, and gaps carry no meaning and are not defects.
+   *
+   * Decision 097 registered no code and left the check to the unit where it
+   * becomes executable, which is resolution: this is the first place a set of
+   * funding rules is assembled and ordered. Decision 073's convention is
+   * satisfied because Decision 097 specified the behaviour being reported.
+   */
+  RULE_FUNDING_DUPLICATE_SEQUENCE: 'RULE_FUNDING_DUPLICATE_SEQUENCE',
+
+  /*
+   * Resolution requires behaviour this slice does not implement.
+   *
+   * This reports an unimplemented capability, not invalid data, so its category
+   * is UNSUPPORTED_STATE. It follows the Allocation Engine's established
+   * treatment: `ALLOCATION_STAGE_NOT_SUPPORTED` refuses a stage the executor
+   * recognises but cannot run, for the reason that silently skipping it would
+   * drop money and produce a confidently wrong answer.
+   *
+   * The same reasoning applies here, one engine earlier. Where an input would
+   * require the resolver to answer a question no accepted source has settled,
+   * refusing is the only alternative to inventing the answer, which Constitution
+   * Principle 4 forbids. The two conditions it currently reports are:
+   *
+   * - two effective configurations competing for one replacing slot kind at
+   *   different owners, which is precedence and fallback behaviour and remains
+   *   Blocker C; and
+   * - a funding requirement no emitted stage would fund, which would require
+   *   sequencing REQUIRED_RECURRING and answering the duplicate-destination
+   *   question PFOS-ENG-02 §48 leaves open.
+   *
+   * It never reports an authored defect. A plan that trips it is a real plan
+   * this engine cannot yet resolve, and the fix is a later decision or a later
+   * slice rather than an edit by the user.
+   */
+  RULE_RESOLUTION_NOT_SUPPORTED: 'RULE_RESOLUTION_NOT_SUPPORTED',
 } as const;
 
 export type RuleErrorCode = (typeof RULE_ERROR_CODES)[keyof typeof RULE_ERROR_CODES];
