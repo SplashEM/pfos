@@ -31,10 +31,15 @@ import { executeAllocation } from './execute-allocation';
  *   - a sequential top-priority requirement (§17),
  *   - a single-destination leftover policy (§33).
  *
- * The ResolvedRuleSet below is hardcoded. That is the Milestone 2 output and
- * the Milestone 3 input, so building it by hand is exactly the M2/M3 boundary
- * Decision 074 defines. No resolver runs here, and none is required: with one
- * rule per slot nothing competes, so resolution would be an identity function.
+ * The ResolvedRuleSet below is hardcoded, and deliberately stays that way. That
+ * is the Milestone 2 output and the Milestone 3 input, so building it by hand
+ * is exactly the M2/M3 boundary Decision 074 defines, and it keeps this file a
+ * test of the executor alone: a resolution defect cannot reach it.
+ *
+ * `authored-paycheck.test.ts` is the product-level test that starts one step
+ * earlier and runs authored rules through the resolver into this same executor.
+ * PFOS no longer needs a hand-built resolved rule set to answer a paycheck; this
+ * one exists so the two halves can fail independently.
  *
  * `stageSequence` deliberately omits REQUIRED_RECURRING. Emergency Fund draws
  * its requirement from `requiredFundingRules` once, at the TOP_PRIORITY stage,
