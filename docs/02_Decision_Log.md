@@ -8933,6 +8933,122 @@ No specification text changes, no validator is authorised, no error code is regi
 
 ---
 
+# Decision 098: The First Persisted Confirmed Paycheck and the Bounded Persistence Foundation
+
+**Status:** Accepted
+**Related:** Decisions 021, 022, 023, 056, 069, 071, 074, 092, 093, 095
+**Scope:** Architecture, Data, Engineering
+
+## Decision
+
+### 1. What one confirmation persists
+
+Confirming one paycheck persists at minimum one `PlanSnapshot` and one `Allocation` that references it, written atomically as a single confirmation operation. A confirmation that stored one without the other is not a valid outcome.
+
+This is the minimum this slice requires, not a permanent ceiling. Later work may add audit entries, correction records or domain events to the same operation without reopening this decision.
+
+### 2. PlanSnapshot.schemaVersion is 1, and it is independent
+
+`PlanSnapshot.schemaVersion` is `1`. It versions the `PlanSnapshot` envelope of holding 5 and nothing else.
+
+It is not `ResolvedRuleSet.schemaVersion`, not `Allocation.schemaVersion`, not the IndexedDB database version of PFOS-ENG-00 §26, not the backup format version of §27, and not the application version.
+
+Embedding a `ResolvedRuleSet` whose own `schemaVersion` changes does not by itself change `PlanSnapshot.schemaVersion`. Only an incompatible change to the envelope itself does, under Decision 074's rule. The embedded value carries its own `schemaVersion` as data, so a reader identifies the embedded shape from the shape itself rather than by inference from the envelope.
+
+This settles, for the persisted contract, the relationship Decisions 092, 093 and 095 each recorded as undetermined and left to the persistence design.
+
+### 3. Allocation.schemaVersion is 1, and it is independent
+
+`Allocation.schemaVersion` is `1`. It versions the `Allocation` envelope of holding 6 and nothing else, independently of `PlanSnapshot.schemaVersion`, `ResolvedRuleSet.schemaVersion` and the database version.
+
+### 4. Historical fidelity
+
+A confirmed `Allocation` is interpreted using the `PlanSnapshot` recorded when it was confirmed.
+
+It must never change because current rules changed, because current plan settings changed, or because the resolver's current inputs changed. Confirmed allocations are not re-resolved from current rules. This applies Decisions 021, 022 and 023 and PFOS-ENG-00 §32 Invariants 9 and 10 to the persisted record.
+
+### 5. The minimum PlanSnapshot envelope
+
+`id`, `schemaVersion`, `createdAt`, `eventType`, `eventId`, and the complete `ResolvedRuleSet` by value.
+
+There is no top-level `effectiveAt` and no top-level `sourceRuleVersionIds`. PFOS-ENG-02 §56 requires the snapshot to contain the resolved rule set, the rounding policy identifier, the evaluation date and the source rule versions; the embedded `ResolvedRuleSet` already carries `roundingPolicyId`, `evaluationDate`, `sourceRuleVersionIds` and `planVersionId`, so §56 is satisfied by value. Storing either fact twice would put two members that can disagree about one fact inside an immutable financial record, and the record would give no way to tell which was right.
+
+Members PFOS-ENG-01 §20 lists that no shipped behaviour produces — event overrides, bucket balances, goal cycles, rollover settings beyond those already inside the resolved set — are absent rather than present and empty. An empty shape claims a behaviour exists.
+
+### 6. The minimum Allocation envelope
+
+`id`, `schemaVersion`, `incomeEventId`, `planSnapshotId`, `status`, `confirmedAt`, `currency`, `totalInputCents`, `totalAllocatedCents`, `totalUnallocatedCents`, and `components`.
+
+Each component carries `destinationBucketId`, `stage`, `amountCents`, `stableOrder`, and the structured explanation facts the shipped `AllocationExplanation` already carries, including the requested amount where the explanation carries one.
+
+Explanation facts are persisted, as facts rather than as prose. PFOS-ENG-02 §69 lists `explanationCodes` on the persisted component, PFOS-ENG-01 §20 lists explanation metadata among snapshot contents, the PRD records that Plan Snapshots exist so historical explanations remain accurate, and Constitution Principle 9 requires an allocation to be explainable. A stored allocation that could not say why a line received its amount without re-running rules would satisfy none of them. Prose is not persisted: PFOS-ENG-02 §52 places the conversion to text in the presentation layer.
+
+`stableOrder` is persisted rather than inferred. PFOS-ENG-02 §68 forbids depending on retrieval order and Invariant 11 forbids repository ordering altering results, so the order a person saw is stored.
+
+The stored record must satisfy Invariant 1: `totalInputCents` equals `totalAllocatedCents` plus `totalUnallocatedCents`.
+
+Omitted from PFOS-ENG-02 §69's conceptual model, each for a reason: `evaluationDate`, read from the referenced snapshot under the same one-fact rule as holding 5; `correctionOfAllocationId`, because no correction behaviour exists; `unmetAmountCents`, because §41's shortfall behaviour is not implemented and the shipped explanation contract already declines that member; per-component `ruleVersionIds`, because nothing produces them and the snapshot carries the versions; and the component `id` and `allocationId`, which are relational artifacts of a table model where components are nested inside their allocation.
+
+### 7. Persisted money
+
+Persisted monetary members are integer minor units, named `...Cents`, with one explicit `currency` member on each record. PFOS-ENG-00 §10.1 requires integer cents and §10.2 the safe-integer range; PFOS-ENG-02 §69 supplies the spelling.
+
+No persisted monetary member is a floating-point number, and no `Money` object is serialized. Repositories convert between the persisted spelling and the domain value object. No multi-currency behaviour is decided.
+
+### 8. Malformed and unsupported financial records
+
+A stored confirmed record that does not read back as a valid record of its declared `schemaVersion` produces an explicit typed read failure, and the stored data is left untouched.
+
+It is never silently defaulted, repaired, partially accepted, deleted or reinterpreted as a new valid record. An unrecognised `schemaVersion` is such a failure. This applies §26's rules — never silently delete user financial data, fail safely — to the read path, and it is the point on which a financial record differs from the disposable preview-settings record, which may fall back to a default.
+
+### 9. The bounded persistence foundation
+
+One separately reviewable persistence unit is authorised, containing only: one IndexedDB database at database schema version 1; the object stores required for `PlanSnapshot` and `Allocation`; narrow application-owned persistence ports; one infrastructure IndexedDB adapter; one atomic transaction able to write the records of holding 1 together; and the typed read and write failure behaviour of holding 8.
+
+Not authorised: a generic repository framework, a generalized unit-of-work framework, a migration engine, compatibility readers, backup or restore, synchronisation, cloud persistence, history UI, corrections, reversals, audit-dashboard infrastructure, and any idempotency framework.
+
+PFOS-ENG-00 §48 lists the persistence foundation before the paycheck confirmation slice, and Decision 069 makes §48 the unit of work, so this unit is implemented and reviewed before confirmation is built on it.
+
+## Why
+
+The product has reached the first capability that cannot be delivered without durable financial records, and Decisions 092 and 095 each named this moment as the one at which the deferred persisted-version questions become live.
+
+Two of those questions cannot be narrowed away. A `PlanSnapshot` and an `Allocation` each require a `schemaVersion` that no accepted source had valued, and a number chosen inside an implementation commit would be a persisted contract identifier fixed by accident — the failure Decision 074's rule exists to prevent, and the reason Decisions 092, 094 and 095 each fixed a persisted spelling by decision rather than in code.
+
+Everything else here is held for the same reason: each holding either records what accepted authority already requires, or fixes a value that would otherwise be chosen arbitrarily inside a record that is immutable, financial, and hard to correct once a user has one.
+
+## Alternatives Considered
+
+Storing the allocation without a Plan Snapshot was rejected. Decision 023 requires a confirmed allocation to reference the configuration that produced it, PFOS-ENG-02 §56 makes the reference mandatory, and Invariant 9 requires historical operations to retain their original snapshot. The result would be behaviourally stable but would not be a confirmed allocation.
+
+Making `PlanSnapshot.schemaVersion` track `ResolvedRuleSet.schemaVersion` was rejected. They version different contracts, PFOS-ENG-00 §40 forbids conflating version classes, and coupling them would force an envelope increment every time an unrelated resolved contract changed.
+
+Starting either version above 1 was rejected. §26 permits V1 to begin at schema version 1, nothing is persisted today, and no number is reserved.
+
+Reusing the preview-settings local-storage record was rejected. Decision 056 chose IndexedDB over localStorage for exactly this class of data, and that record's discard-on-mismatch behaviour is the opposite of holding 8.
+
+Deciding migration architecture, compatibility readers and corrections now was rejected. No stored data exists to migrate, and each would fix behaviour ahead of the code that gives it meaning.
+
+Persisting rendered explanation prose was rejected. §52 places the conversion to text in the presentation layer, and stored prose could never be reworded, shortened or translated.
+
+## Consequences
+
+The bounded persistence unit of holding 9 can begin. The confirmation slice follows it as separate work.
+
+Three version members now exist with independent meanings, and a reader must not infer one from another.
+
+A user whose stored record cannot be read sees an explicit failure rather than a plausible wrong answer, and the data stays on disk for recovery.
+
+## Deliberately unresolved
+
+Migration architecture and any read-migration. Forward and backward compatibility readers, and the error codes they would report. Corrections, recalculation and reversal. Stale-preview detection at confirmation, and duplicate-confirmation and idempotency semantics beyond preventing a double click in the UI. Audit history, history UI and domain events. Backup, export and restore. Multiple devices, synchronisation and retention. Multi-currency. Bucket balances and every other record type in §25.1. All Milestone 3 behaviour.
+
+## Future Review Trigger
+
+Reconsider when a second event type, a correction or a reversal changes either envelope; when a stored record must survive an incompatible contract change, since migration architecture becomes live then; or when a record type beyond `PlanSnapshot` and `Allocation` is persisted, since the bounded foundation of holding 9 was sized for two.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
