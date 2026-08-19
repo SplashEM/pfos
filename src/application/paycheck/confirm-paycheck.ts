@@ -90,7 +90,9 @@ export async function confirmPaycheck(
     totalInputCents: request.proposal.incomeEvent.netAmount.cents,
     totalAllocatedCents: request.proposal.allocation.totalAllocated.cents,
     totalUnallocatedCents: request.proposal.allocation.unallocated.cents,
-    components: request.proposal.allocation.lines.map(toComponent),
+    components: request.proposal.allocation.lines.map((line, index) =>
+      toComponent(line, index, request.proposal.destinationLabels),
+    ),
   };
 
   const written = await request.store.saveConfirmation({ snapshot, allocation });
@@ -104,13 +106,22 @@ export async function confirmPaycheck(
  * `stableOrder` is the position the engine emitted, recorded so the order a
  * person saw survives storage: PFOS-ENG-02 §68 forbids depending on retrieval
  * order and Invariant 11 forbids repository ordering from altering results.
+ *
+ * `destinationLabel` is the name the preview showed for this line, carried
+ * across rather than looked up (Decision 099). It falls back to the identifier
+ * on the same terms the preview did, so what is stored is what was read.
  */
-function toComponent(line: AllocationLine, index: number): AllocationComponentRecord {
+function toComponent(
+  line: AllocationLine,
+  index: number,
+  labels: Readonly<Record<string, string>>,
+): AllocationComponentRecord {
   return {
     destinationBucketId: line.bucketId,
     stage: line.stage,
     amountCents: line.amount.cents,
     stableOrder: index,
     explanation: toPersistedExplanation(line.explanation),
+    destinationLabel: labels[line.bucketId] ?? line.bucketId,
   };
 }

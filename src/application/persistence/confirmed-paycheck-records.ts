@@ -48,13 +48,28 @@ import type { CurrencyCode } from '@domain/shared/money/currency';
 export const PLAN_SNAPSHOT_SCHEMA_VERSION = 1;
 
 /**
- * The version of the persisted Allocation envelope (Decision 098 holding 3).
+ * The version of the persisted Allocation envelope (Decision 098 holding 3;
+ * Decision 099 holding 4).
  *
  * Independent of `PLAN_SNAPSHOT_SCHEMA_VERSION`, of
  * `ResolvedRuleSet.schemaVersion` and of the database version, for the same
  * reason and on the same terms.
+ *
+ * Version 2 added `destinationLabel` to each component. Decision 097 records
+ * that adding a member is an incompatible persisted change, which triggers
+ * Decision 074's versioning rule, so the number moved rather than the member
+ * being slipped in optionally.
  */
-export const ALLOCATION_RECORD_SCHEMA_VERSION = 1;
+export const ALLOCATION_RECORD_SCHEMA_VERSION = 2;
+
+/**
+ * The envelope version written before destination names were recorded.
+ *
+ * Read, never written. A version 1 record carries no `destinationLabel` and is
+ * shown under its destination identifier, which is what it honestly contains
+ * (Decision 099 holding 5). Nothing rewrites, upgrades or deletes one.
+ */
+export const ALLOCATION_RECORD_SCHEMA_VERSION_WITHOUT_LABELS = 1;
 
 /**
  * The kind of financial event a snapshot was taken for.
@@ -150,6 +165,22 @@ export interface AllocationComponentRecord {
   readonly amountCents: number;
   readonly stableOrder: number;
   readonly explanation: PersistedAllocationExplanation;
+  /**
+   * The name shown for this destination when the paycheck was confirmed
+   * (Decision 099).
+   *
+   * Presentation and audit context, and nothing else: no engine reads it, and
+   * it takes no part in resolution, allocation, ordering, identity or any
+   * calculation. `destinationBucketId` remains what says where the money went.
+   *
+   * Stored rather than looked up, because a name looked up later is the current
+   * name: renaming a priority would otherwise make a paycheck confirmed against
+   * "Laptop" read as "Vacation", with the record untouched and the screen
+   * saying something else.
+   *
+   * Absent on records written at version 1, which predate it.
+   */
+  readonly destinationLabel?: string;
 }
 
 /**

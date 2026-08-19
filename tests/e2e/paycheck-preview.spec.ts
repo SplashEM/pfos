@@ -268,19 +268,19 @@ test('a person can confirm a paycheck and still see it after changing the plan',
   const saved = page.getByRole('region', { name: 'Confirmed paychecks' });
   const savedRows = saved.getByRole('row');
 
-  /* A saved paycheck names destinations by the identifier its record stores. */
-  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
-  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
-  await expect(savedRows.filter({ hasText: 'bucket-leftover' })).toContainText('$1,000.00');
+  /* A saved paycheck names destinations as they were named at confirmation. */
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Spending' })).toContainText('$1,000.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
   await expect(savedRows.filter({ hasText: 'Unallocated' })).toContainText('$0.00');
 
   /* The confirmed paycheck survives a real reload. */
   await page.reload();
 
-  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
 
   /* The plan changes completely. */
   await page.getByLabel('Giving').fill('20');
@@ -296,13 +296,13 @@ test('a person can confirm a paycheck and still see it after changing the plan',
   await expect(previewRows.filter({ hasText: 'Giving' })).toContainText('$600.00');
 
   /* The confirmed paycheck is unchanged by any of it. */
-  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
-  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
 
   /* Its reasons are the ones it was confirmed with. */
-  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText(
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText(
     'Priority 1 · Requested $500.00 · Funded in full.',
   );
 
@@ -336,7 +336,7 @@ test('renaming a priority does not rewrite a paycheck already confirmed', async 
   const saved = page.getByRole('region', { name: 'Confirmed paychecks' });
   const savedRows = saved.getByRole('row');
 
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
 
   /* The priority is renamed, and the plan is previewed again under the new name. */
   await page.getByLabel('Priority 2 name').fill('Vacation');
@@ -346,14 +346,17 @@ test('renaming a priority does not rewrite a paycheck already confirmed', async 
     page.getByRole('region', { name: 'Preview' }).getByRole('row').filter({ hasText: 'Vacation' }),
   ).toContainText('$300.00');
 
-  /* The confirmed paycheck says nothing about Vacation, before or after a reload. */
+  /*
+   * The confirmed paycheck still says Laptop, before and after a reload: the
+   * name was recorded with it, and a later rename cannot reach it.
+   */
   await expect(saved).not.toContainText('Vacation');
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
 
   await page.reload();
 
   await expect(saved).not.toContainText('Vacation');
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
 });
 
@@ -399,17 +402,17 @@ test('a person can see every paycheck they have confirmed', async ({ page }) => 
   await expect(entries.nth(1)).toContainText('2026-01-15');
 
   const savedRows = history.getByRole('row');
-  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$500.00');
 
   /* Opening paycheck A shows what was confirmed then. */
   await entries.nth(1).click();
 
-  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
-  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
-  await expect(savedRows.filter({ hasText: 'bucket-leftover' })).toContainText('$1,000.00');
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Spending' })).toContainText('$1,000.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
-  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText(
+  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText(
     'Priority 1 · Requested $500.00 · Funded in full.',
   );
 
@@ -423,7 +426,7 @@ test('a person can see every paycheck they have confirmed', async ({ page }) => 
   /* And the older one still reads as it did. */
   await entries.nth(1).click();
 
-  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
 });
 

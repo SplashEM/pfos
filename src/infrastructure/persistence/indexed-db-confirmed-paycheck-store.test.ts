@@ -261,7 +261,7 @@ describe('a stored record this build cannot read', () => {
   });
 
   it('fails the read and does not repair the record', async () => {
-    const fromAnotherVersion = { ...allocationRecord(), schemaVersion: 2 };
+    const fromAnotherVersion = { ...allocationRecord(), schemaVersion: 99 };
     await writeRaw('allocations', fromAnotherVersion);
 
     const result = await store.readConfirmation('allocation-1');
@@ -277,7 +277,7 @@ describe('a stored record this build cannot read', () => {
   });
 
   it('fails the read when a snapshot was written under another version', async () => {
-    await writeRaw('plan-snapshots', { ...planSnapshotRecord(), schemaVersion: 2 });
+    await writeRaw('plan-snapshots', { ...planSnapshotRecord(), schemaVersion: 99 });
     await writeRaw('allocations', allocationRecord());
 
     const result = await store.readConfirmation('allocation-1');

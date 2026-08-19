@@ -278,17 +278,28 @@ describe('a confirmed paycheck after the plan changes', () => {
     expect(toConfirmedPaycheckView(await readBack()).paycheckDate).toBe('2026-01-15');
   });
 
-  /* Destinations read as the identifier the record stores, always. */
-  it('names each destination by the identifier the record stores', async () => {
+  /* Destinations read as the names the person confirmed against (Decision 099). */
+  it('names each destination as it was named at confirmation', async () => {
     await confirm();
 
     const view = toConfirmedPaycheckView(await readBack());
 
     expect(view.lines.map((line) => line.label)).toEqual([
-      'bucket-giving',
-      'bucket-emergency-fund',
-      'bucket-laptop',
-      'bucket-leftover',
+      'Giving',
+      'Emergency Fund',
+      'Laptop',
+      'Spending',
+    ]);
+  });
+
+  it('stores the name beside each component rather than only on screen', async () => {
+    await confirm();
+
+    expect((await readBack()).allocation.components.map((line) => line.destinationLabel)).toEqual([
+      'Giving',
+      'Emergency Fund',
+      'Laptop',
+      'Spending',
     ]);
   });
 });
@@ -318,10 +329,10 @@ describe('renaming a destination after confirming', () => {
 
     expect(view.lines.map((line) => line.label)).not.toContain('Vacation');
     expect(view.lines.map((line) => line.label)).toEqual([
-      'bucket-giving',
-      'bucket-emergency-fund',
-      'bucket-laptop',
-      'bucket-leftover',
+      'Giving',
+      'Emergency Fund',
+      'Laptop',
+      'Spending',
     ]);
   });
 

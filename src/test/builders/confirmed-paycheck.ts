@@ -6,6 +6,7 @@ import {
 } from '@application/paycheck/paycheck-plan';
 import {
   ALLOCATION_RECORD_SCHEMA_VERSION,
+  ALLOCATION_RECORD_SCHEMA_VERSION_WITHOUT_LABELS,
   PLAN_SNAPSHOT_SCHEMA_VERSION,
   type AllocationComponentRecord,
   type AllocationRecord,
@@ -84,6 +85,7 @@ export function allocationComponentRecords(): readonly AllocationComponentRecord
   return [
     {
       destinationBucketId: 'bucket-giving',
+      destinationLabel: 'Giving',
       stage: 'GLOBAL_OBLIGATION',
       amountCents: 20_000,
       stableOrder: 0,
@@ -91,6 +93,7 @@ export function allocationComponentRecords(): readonly AllocationComponentRecord
     },
     {
       destinationBucketId: 'bucket-emergency-fund',
+      destinationLabel: 'Emergency Fund',
       stage: 'TOP_PRIORITY',
       amountCents: 50_000,
       stableOrder: 1,
@@ -102,6 +105,7 @@ export function allocationComponentRecords(): readonly AllocationComponentRecord
     },
     {
       destinationBucketId: 'bucket-leftover',
+      destinationLabel: 'Spending',
       stage: 'LEFTOVER_POLICY',
       amountCents: 130_000,
       stableOrder: 2,
@@ -124,6 +128,33 @@ export function allocationRecord(overrides: Partial<AllocationRecord> = {}): All
     totalAllocatedCents: 200_000,
     totalUnallocatedCents: 0,
     components: allocationComponentRecords(),
+    ...overrides,
+  };
+}
+
+/** The same component with its destination name removed. */
+function withoutLabel(component: AllocationComponentRecord): AllocationComponentRecord {
+  const copy: Record<string, unknown> = { ...component };
+  delete copy['destinationLabel'];
+
+  return copy as unknown as AllocationComponentRecord;
+}
+
+/**
+ * A confirmed allocation as written before destination names were stored.
+ *
+ * Schema version 1: every component lacks `destinationLabel`. Used to prove the
+ * records already on people's devices still read (Decision 099 holding 5).
+ */
+export function legacyAllocationRecord(
+  overrides: Partial<AllocationRecord> = {},
+): AllocationRecord {
+  const { components, ...rest } = allocationRecord(overrides);
+
+  return {
+    ...rest,
+    schemaVersion: ALLOCATION_RECORD_SCHEMA_VERSION_WITHOUT_LABELS,
+    components: components.map(withoutLabel),
     ...overrides,
   };
 }

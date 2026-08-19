@@ -5,7 +5,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { ConfirmedPaycheckStore } from '@application/persistence/confirmed-paycheck-store';
 import { createIndexedDbConfirmedPaycheckStore } from '@infrastructure/persistence/indexed-db-confirmed-paycheck-store';
 import { APPLICATION_ERROR_CODES } from '@application/errors/application-error-codes';
-import { allocationRecord, planSnapshotRecord } from '@test/builders/confirmed-paycheck';
+import { toConfirmedPaycheckView } from '@application/paycheck/confirmed-paycheck-view';
+import {
+  allocationRecord,
+  legacyAllocationRecord,
+  planSnapshotRecord,
+} from '@test/builders/confirmed-paycheck';
 
 /**
  * The published database, as devices already have it.
@@ -508,5 +513,219 @@ describe('a history that cannot be read whole', () => {
 
     expect(await readRaw('allocations', 'allocation-2')).toEqual(damaged);
     expect(await readRaw('allocations', 'allocation-1')).toEqual(allocationRecord());
+  });
+});
+
+describe('destination names in a confirmed record', () => {
+  it('writes the current envelope version for a new confirmation', async () => {
+    await createPublishedDatabase();
+    await store.saveConfirmation({
+      snapshot: planSnapshotRecord(),
+      allocation: allocationRecord(),
+    });
+
+    const latest = await store.readLatestConfirmation();
+
+    expect(latest.ok && latest.value?.allocation.schemaVersion).toBe(2);
+  });
+
+  it('keeps the name stored beside each component', async () => {
+    await createPublishedDatabase();
+    await store.saveConfirmation({
+      snapshot: planSnapshotRecord(),
+      allocation: allocationRecord(),
+    });
+
+    const latest = await store.readLatestConfirmation();
+    if (!latest.ok || latest.value === undefined) {
+      throw new Error('Expected a stored confirmation.');
+    }
+
+    expect(latest.value.allocation.components.map((line) => line.destinationLabel)).toEqual([
+      'Giving',
+      'Emergency Fund',
+      'Spending',
+    ]);
+  });
+
+  /*
+   * Decision 099 holding 4: the name is required at the current version. An
+   * optional member could only be omitted, so a truncated record and a
+   * deliberate one would be byte-identical.
+   */
+  it('refuses a current-version record whose component has no name', async () => {
+    await createPublishedDatabase();
+
+    const withoutName = {
+      ...allocationRecord(),
+      components: allocationRecord().components.map((component) => {
+        const copy: Record<string, unknown> = { ...component };
+        delete copy['destinationLabel'];
+        return copy;
+      }),
+    };
+
+    const saved = await store.saveConfirmation({
+      snapshot: planSnapshotRecord(),
+      allocation: withoutName as never,
+    });
+
+    expect(saved.ok).toBe(false);
+    if (!saved.ok) {
+      expect(saved.error.code).toBe(APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED);
+    }
+  });
+
+  it('refuses a current-version record whose name is blank', async () => {
+    await createPublishedDatabase();
+
+    const blank = {
+      ...allocationRecord(),
+      components: allocationRecord().components.map((component) => ({
+        ...component,
+        destinationLabel: '',
+      })),
+    };
+
+    const saved = await store.saveConfirmation({
+      snapshot: planSnapshotRecord(),
+      allocation: blank,
+    });
+
+    expect(saved.ok).toBe(false);
+  });
+});
+
+describe('records written before destination names were stored', () => {
+  /** Writes a value straight into a store, bypassing every check. */
+  async function writeRaw(storeName: string, value: unknown): Promise<void> {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName);
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error('open failed'));
+      };
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction([storeName], 'readwrite');
+      transaction.oncomplete = () => {
+        resolve();
+      };
+      transaction.onerror = () => {
+        reject(transaction.error ?? new Error('write failed'));
+      };
+      transaction.objectStore(storeName).put(value);
+    });
+
+    database.close();
+  }
+
+  /** Reads a value straight back out, so a test can see the stored bytes. */
+  async function readRaw(storeName: string, key: string): Promise<unknown> {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(databaseName);
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error('open failed'));
+      };
+    });
+
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const request = database.transaction([storeName], 'readonly').objectStore(storeName).get(key);
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error('read failed'));
+      };
+    });
+
+    database.close();
+    return value;
+  }
+
+  beforeEach(async () => {
+    await createPublishedDatabase();
+    await writeRaw('plan-snapshots', planSnapshotRecord());
+    await writeRaw('allocations', legacyAllocationRecord());
+  });
+
+  /* Decision 099 holding 5: a version 1 record still reads. */
+  it('still reads a version 1 record', async () => {
+    const latest = await store.readLatestConfirmation();
+
+    expect(latest.ok).toBe(true);
+    if (latest.ok) {
+      expect(latest.value?.allocation.schemaVersion).toBe(1);
+    }
+  });
+
+  it('keeps every amount from a version 1 record', async () => {
+    const latest = await store.readLatestConfirmation();
+    if (!latest.ok || latest.value === undefined) {
+      throw new Error('Expected the legacy record to read.');
+    }
+
+    expect(latest.value.allocation.components.map((line) => line.amountCents)).toEqual([
+      20_000, 50_000, 130_000,
+    ]);
+    expect(latest.value.allocation.totalAllocatedCents).toBe(200_000);
+  });
+
+  it('shows the identifier where a version 1 record has no name', async () => {
+    const latest = await store.readLatestConfirmation();
+    if (!latest.ok || latest.value === undefined) {
+      throw new Error('Expected the legacy record to read.');
+    }
+
+    expect(toConfirmedPaycheckView(latest.value).lines.map((line) => line.label)).toEqual([
+      'bucket-giving',
+      'bucket-emergency-fund',
+      'bucket-leftover',
+    ]);
+  });
+
+  it('lists a version 1 record alongside a current one', async () => {
+    await store.saveConfirmation({
+      snapshot: planSnapshotRecord({ id: 'plan-snapshot-2' }),
+      allocation: allocationRecord({
+        id: 'allocation-2',
+        planSnapshotId: 'plan-snapshot-2',
+        confirmedAt: { epochMilliseconds: 1_800_000_000_000, timeZone: 'America/Los_Angeles' },
+      }),
+    });
+
+    const history = await store.readConfirmations();
+    if (!history.ok) {
+      throw new Error('Expected the history to read.');
+    }
+
+    expect(history.value.map((entry) => entry.allocation.schemaVersion)).toEqual([2, 1]);
+  });
+
+  /* Nothing upgrades, rewrites or re-saves it (holding 6). */
+  it('leaves the version 1 record exactly as it was', async () => {
+    const before = await readRaw('allocations', 'allocation-1');
+
+    await store.readConfirmations();
+    await store.readLatestConfirmation();
+
+    expect(await readRaw('allocations', 'allocation-1')).toEqual(before);
+    expect((before as { schemaVersion: number }).schemaVersion).toBe(1);
+  });
+
+  it('leaves the database at version 1 with no new store or index', async () => {
+    await store.readConfirmations();
+
+    const state = await inspect();
+
+    expect(state.version).toBe(PUBLISHED_VERSION);
+    expect([...state.stores].sort()).toEqual(['allocations', 'plan-snapshots']);
+    expect(state.allocationIndexes).toEqual([]);
   });
 });

@@ -11,6 +11,7 @@ import { err, ok, type Result } from '@domain/shared/errors/result';
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
 import {
   ALLOCATION_RECORD_SCHEMA_VERSION,
+  ALLOCATION_RECORD_SCHEMA_VERSION_WITHOUT_LABELS,
   PLAN_SNAPSHOT_SCHEMA_VERSION,
   type AllocationComponentRecord,
   type AllocationRecord,
@@ -97,8 +98,17 @@ export function parseAllocationRecord(
     return malformed('A stored allocation was not a record.');
   }
 
+  /*
+   * Two versions are read (Decision 099 holding 5): the current one, whose
+   * components carry the name a person confirmed against, and the one before
+   * it, whose components do not. That is a reader for one immediately preceding
+   * format and not a migration mechanism — nothing is upgraded, rewritten or
+   * re-saved, and a version 1 record stays a version 1 record.
+   */
   const version = record['schemaVersion'];
-  if (version !== ALLOCATION_RECORD_SCHEMA_VERSION) {
+  const labelled = version === ALLOCATION_RECORD_SCHEMA_VERSION;
+
+  if (!labelled && version !== ALLOCATION_RECORD_SCHEMA_VERSION_WITHOUT_LABELS) {
     return unsupportedVersion('allocation', version, ALLOCATION_RECORD_SCHEMA_VERSION);
   }
 
@@ -136,7 +146,7 @@ export function parseAllocationRecord(
     return malformed('A stored allocation carried a total that was not an exact number of cents.');
   }
 
-  const components = parseComponents(record['components']);
+  const components = parseComponents(record['components'], labelled);
   if (!components.ok) {
     return components;
   }
@@ -162,7 +172,9 @@ export function parseAllocationRecord(
 
   return ok({
     id,
-    schemaVersion: ALLOCATION_RECORD_SCHEMA_VERSION,
+    schemaVersion: labelled
+      ? ALLOCATION_RECORD_SCHEMA_VERSION
+      : ALLOCATION_RECORD_SCHEMA_VERSION_WITHOUT_LABELS,
     incomeEventId,
     planSnapshotId,
     status: 'CONFIRMED',
@@ -175,9 +187,16 @@ export function parseAllocationRecord(
   });
 }
 
-/** Reads the stored allocation lines, in the order they were written. */
+/**
+ * Reads the stored allocation lines, in the order they were written.
+ *
+ * `labelled` says whether this record's version carries destination names. At
+ * the current version a missing name is a malformed record; at version 1 there
+ * was never one to miss.
+ */
 function parseComponents(
   value: unknown,
+  labelled: boolean,
 ): Result<readonly AllocationComponentRecord[], DomainError<string>> {
   if (!Array.isArray(value)) {
     return malformed('A stored allocation carried no component list.');
@@ -210,7 +229,19 @@ function parseComponents(
       return malformed('A stored allocation component carried no readable explanation.');
     }
 
-    components.push({ destinationBucketId, stage, amountCents, stableOrder, explanation });
+    const destinationLabel = asNonEmptyString(component['destinationLabel']);
+    if (labelled && destinationLabel === undefined) {
+      return malformed('A stored allocation component carried no destination name.');
+    }
+
+    components.push({
+      destinationBucketId,
+      stage,
+      amountCents,
+      stableOrder,
+      explanation,
+      ...(destinationLabel === undefined ? {} : { destinationLabel }),
+    });
   }
 
   return ok(components);

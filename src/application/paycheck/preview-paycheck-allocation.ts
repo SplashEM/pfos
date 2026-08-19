@@ -71,6 +71,15 @@ export interface ConfirmablePaycheck {
   readonly resolvedRuleSet: ResolvedRuleSet;
   readonly allocation: AllocationResult;
   readonly incomeEvent: AllocationIncomeEvent;
+  /**
+   * The destination names this preview showed, by bucket.
+   *
+   * Carried so a confirmation records the name a person actually read beside
+   * each amount (Decision 099). Looking it up at confirmation time would find
+   * the current name, which is the same name only until the priority is
+   * renamed.
+   */
+  readonly destinationLabels: Readonly<Record<string, string>>;
 }
 
 /** The answer to "where should this paycheck go?", formatted for display. */
@@ -171,6 +180,7 @@ export function previewPaycheckAllocation(
       resolvedRuleSet: plan.value,
       allocation: allocation.value,
       incomeEvent: event.value,
+      destinationLabels: authored.value.labels,
     },
   });
 }

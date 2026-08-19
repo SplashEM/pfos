@@ -10,21 +10,14 @@ import { explanationText, usd } from './allocation-explanation-text';
  * against current rules, so this reads the record and formats it and does
  * nothing else.
  *
- * Destinations read as the identifier the record stores, and deliberately not
- * as a name from the plan being edited now.
+ * Destinations read as the name stored with the record, never as a name from
+ * the plan being edited now (Decision 099).
  *
- * A confirmed record holds `destinationBucketId` and no display name: neither
- * Decision 098 nor PFOS-ENG-02 §69 puts a label in the record, and PFOS-ENG-01
- * §26 keeps resolution independent of display names. Reading the name from the
- * current plan would mean a paycheck a person confirmed against "Laptop"
- * silently reads as "Vacation" once they rename that priority — the record
- * unchanged, the screen saying something else. A stored paycheck may not appear
- * to have had destinations it did not have.
- *
- * So the identifier is shown. It is plain, it comes only from the record, and
- * it cannot drift. Showing the human name a person saw at confirmation would
- * mean persisting that name, which is a change to the confirmed-record contract
- * and belongs to a decision rather than to this function.
+ * The label was written at confirmation, so renaming a priority afterwards
+ * changes nothing here: a paycheck confirmed against "Laptop" still reads
+ * "Laptop" once that priority becomes "Vacation". A record written before
+ * destination names were stored has none, and shows its identifier instead,
+ * which is what it honestly contains.
  */
 export interface ConfirmedPaycheckLineView {
   readonly bucketId: string;
@@ -62,7 +55,7 @@ export function toConfirmedPaycheckView(records: ConfirmedPaycheckRecords): Conf
     confirmedAt: readableMoment(allocation.confirmedAt),
     lines: ordered.map((component) => ({
       bucketId: component.destinationBucketId,
-      label: component.destinationBucketId,
+      label: component.destinationLabel ?? component.destinationBucketId,
       amount: usd(component.amountCents),
       explanation: explanationText(component.explanation, component.amountCents),
     })),

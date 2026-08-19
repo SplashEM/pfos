@@ -794,9 +794,9 @@ describe('confirming a paycheck', () => {
     await confirmPaycheckOnScreen();
 
     expect(rowsUnder('Confirmed paychecks')).toEqual([
-      ['bucket-giving', '$200.00'],
-      ['bucket-emergency-fund', '$500.00'],
-      ['bucket-leftover', '$1,300.00'],
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,300.00'],
     ]);
   });
 
@@ -859,10 +859,10 @@ describe('confirming a paycheck', () => {
     press('Move up', 1);
 
     expect(rowsUnder('Confirmed paychecks')).toEqual([
-      ['bucket-giving', '$200.00'],
-      ['bucket-emergency-fund', '$500.00'],
-      ['bucket-priority-2', '$300.00'],
-      ['bucket-leftover', '$1,000.00'],
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Laptop', '$300.00'],
+      ['Spending', '$1,000.00'],
     ]);
   });
 
@@ -882,7 +882,7 @@ describe('confirming a paycheck', () => {
     const saved = screen.getByRole('region', { name: 'Confirmed paychecks' });
 
     expect(within(saved).queryByText('Vacation')).not.toBeInTheDocument();
-    expect(rowsUnder('Confirmed paychecks')).toContainEqual(['bucket-priority-2', '$300.00']);
+    expect(rowsUnder('Confirmed paychecks')).toContainEqual(['Laptop', '$300.00']);
   });
 
   /* The stored record survives the screen being thrown away and rebuilt. */
@@ -897,9 +897,9 @@ describe('confirming a paycheck', () => {
     await screen.findByRole('region', { name: 'Confirmed paychecks' });
 
     expect(rowsUnder('Confirmed paychecks')).toEqual([
-      ['bucket-giving', '$200.00'],
-      ['bucket-emergency-fund', '$500.00'],
-      ['bucket-leftover', '$1,300.00'],
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,300.00'],
     ]);
   });
 
@@ -1116,20 +1116,20 @@ describe('the confirmed paycheck history', () => {
     await confirmPaycheckOnScreen();
 
     expect(openedRows()).toEqual([
-      ['bucket-giving', '$500.00'],
-      ['bucket-emergency-fund', '$900.00'],
-      ['bucket-priority-2', '$300.00'],
-      ['bucket-leftover', '$800.00'],
+      ['Giving', '$500.00'],
+      ['Emergency Fund', '$900.00'],
+      ['Laptop', '$300.00'],
+      ['Spending', '$800.00'],
     ]);
 
     /* Opening A shows A, untouched by everything that happened since. */
     fireEvent.click(screen.getByRole('button', { name: /2026-01-15/ }));
 
     expect(openedRows()).toEqual([
-      ['bucket-giving', '$200.00'],
-      ['bucket-emergency-fund', '$500.00'],
-      ['bucket-priority-2', '$300.00'],
-      ['bucket-leftover', '$1,000.00'],
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Laptop', '$300.00'],
+      ['Spending', '$1,000.00'],
     ]);
 
     const section = screen.getByRole('region', { name: 'Confirmed paychecks' });
