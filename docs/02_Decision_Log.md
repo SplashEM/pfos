@@ -8825,6 +8825,114 @@ No specification text changes, no validator is authorised, no error code is regi
 
 ---
 
+# Decision 097: Authored Sources for the REQUIRED_FUNDING Envelope Fields
+
+**Status:** Accepted
+**Related:** Decisions 071, 073, 074, 076, 080, 081, 082, 086, 087, 090, 093, 096
+**Scope:** Financial logic, Architecture, Engineering
+
+## Decision
+
+The three `ResolvedFundingRule` members that accepted authority requires but has not sourced are supplied by explicit authored values on the bucket-owned `REQUIRED_FUNDING` configuration:
+
+- `sequence`, an authored integer;
+- `isProtected`, an authored boolean;
+- `allowExcessAboveCapacity`, an authored boolean.
+
+None is derived, defaulted, or assigned a fixed V1 constant.
+
+`sequence` values must be distinct across the `REQUIRED_FUNDING` rules resolved into one `ResolvedRuleSet`. That is the whole of the contention semantics decided here.
+
+This decision partially supersedes one holding of Decision 082, identified exactly below. It settles no other question, changes no `ResolvedRuleSet` member, authorises no `schemaVersion` increment, registers no error code, authorises no validator, and authorises no implementation.
+
+## Narrow supersession of Decision 082
+
+One sentence of Decision 082, in its `REQUIRED_FUNDING` section under "Two consequences", is superseded:
+
+> `ResolvedFundingRule.sequence` cannot come from a funding rule's own configuration, because a bucket-owned rule cannot know its competitors. This decision excludes that source and identifies no other. The ordering source remains open.
+
+That exclusion is replaced by this decision's holding. Its stated reason is answered rather than denied: a bucket-owned rule indeed cannot *know* its competitors, but it does not need to. Knowing the competitors is required to guarantee a coherent collective order; it is not required to author one value. The coherence question is a validation question, and it is answered here by a uniqueness requirement rather than by moving the field to another owner.
+
+Decision 082's Status remains Accepted, and every other holding of it remains binding, including that `REQUIRED_FUNDING` is authored only by a bucket, one Rule per bucket; that `GROUP`, `GLOBAL` and `INCOME_SOURCE` author no funding rules or funding defaults in V1; that the family is not a `GLOBAL` whole-set rule; and that a bucket identifier is stable Rule addressing where it is the rule's owner. No ownership changes.
+
+Decision 082's second consequence, that §15's "must use one" can only be satisfied by authoring, is untouched.
+
+Decision 096 is not disturbed. Its recital that Decision 082 is unamended describes Decision 096's own effect, not a constraint on later decisions.
+
+## sequence
+
+`sequence` is an authored integer carried in the bucket's own `REQUIRED_FUNDING` configuration.
+
+Decision 074 classifies it as a financially meaningful ordering and Decision 090 expressly preserved that classification when it removed the global-obligation equivalent. A financially meaningful value must have an accepted source, and Decision 080's holdings exclude every implicit one: it must not derive from an identifier, from array position, or from repository or storage order. Runtime collection order is not the source, and the position of a resolved entry does not express its order.
+
+The remaining candidates were an authored value on the existing rule or a new plan-level ordering rule. The second would add an authored rule no accepted source describes, and would sit against Decision 082's ownership model for this family, so it adds architecture without removing ambiguity. The first is adopted.
+
+PFOS-ENG-01 §15.7 and §15.8 each list "Priority" among a funding rule's fields, and §15.6 lists "Extra allocation priority", so the specification already contemplates a per-bucket authored ordering value on this family. This decision does not identify the resolved `sequence` field with any of those bullets. Decision 086 recorded that §14.2's "Priority ranks" is not the pool sequence field, and the same caution is observed here: those bullets are evidence that per-bucket authored ordering is contemplated, not a transcription of this field's meaning.
+
+**Uniqueness.** Two funding rules resolved into one `ResolvedRuleSet` must not carry the same `sequence`. This much is forced rather than chosen. Equal values leave the competition order between two buckets undetermined, and every tie-break that could settle it is already forbidden by Decision 080, so a duplicate would make the resolved ordering non-deterministic against Constitution Principle 18 and PFOS-ENG-01 §26. Decision 076 reached the identical conclusion for top-priority rank.
+
+**Nothing further constrains the value.** Following Decision 076's holding for rank, `sequence` need not be positive, contiguous, or start at one. Gaps carry no meaning and are not defects.
+
+No validator is authorised and no error code is registered for the uniqueness requirement. Decision 073's convention holds, and Decision 087 left the equivalent authored-time rank check semantically grounded and unauthorised for the same reason.
+
+## isProtected
+
+`isProtected` is an authored boolean carried in the bucket's own `REQUIRED_FUNDING` configuration.
+
+PFOS-ENG-02 §44 states that "some rules may mark allocations as protected or essential" and lists "User-designated protected obligation" among its examples. User designation is therefore an accepted source, and the field records what Decision 074 already says it records: whether the requirement receives protected treatment under the Allocation Engine specification.
+
+It is not derived from the funding type. §44's other two examples, a required bill and a minimum debt payment, are examples of requirements a user commonly designates, not a mapping from `FundingRuleConfig` variants to protection. No accepted source states such a mapping. Deriving one would force protection onto every `RECURRING_BILL` and make a protected `FIXED_MONTHLY` requirement unrepresentable, and neither consequence is stated anywhere.
+
+No default is assigned. The value is authored in every case.
+
+## allowExcessAboveCapacity
+
+`allowExcessAboveCapacity` is an authored boolean carried in the bucket's own `REQUIRED_FUNDING` configuration.
+
+PFOS-ENG-02 §19 requires that the Allocation Engine "must not allocate above a finite capacity unless the resolved rule explicitly allows excess". The permission is explicit and is carried on the rule, which is what Decision 074 records when it says the field carries resolved policy while capacity itself is calculated by M3 from bucket state.
+
+No fixed V1 value is assigned. A constant would make §19's "unless" branch unreachable and would be exactly the fabricated default this decision refuses.
+
+It is not derived from, merged with, or made redundant by the extra-money booleans that Decision 074 places inside `FundingRuleConfig`. Those answer different questions and keep their accepted meanings: `allowManualExcess` governs manual event overrides beyond a goal target, `extraEligible` and `extraPaymentEligible` govern participation in a later stage rather than exceeding a required-stage capacity, and `allowExtraContributions` is a per-type field of `FIXED_MONTHLY`. `allowExcessAboveCapacity` governs automatic allocation above a finite capacity. Decision 074 is unamended, and no per-type field changes.
+
+## REQUIRED_FUNDING authorability consequence
+
+`REQUIRED_FUNDING` moves from not authorable to authorable, joining `GLOBAL_OBLIGATION`, `TOP_PRIORITIES` and `LEFTOVER_POLICY`. This is the route Decision 096's extension rule provides, and Decision 096's general bounded-authorability holding is applied rather than reopened.
+
+The arm carries the family tag `slotKind`, the Decision 074 `FundingRuleConfig` as `funding`, and the three members above. It carries nothing else.
+
+It does not carry `bucketId`: Decision 082 makes the bucket the rule's owner, so the bucket identity is stable Rule addressing rather than versioned configuration. It does not carry `ruleVersionId`, which Decision 096 fixed as resolver-supplied provenance that is never authored.
+
+The authorable subset is now four families. `LOWER_PRIORITY_POOL`, `ALLOCATION_BASIS`, `GOAL_POLICY` and `ROLLOVER_POLICY` remain not authorable, on Decision 096's terms and for their own unchanged reasons.
+
+## What remains unresolved
+
+The validator and error code for duplicate `sequence`, which await the unit where the check becomes executable.
+
+Canonical storage order of authored funding rules, and any editing or reordering behaviour. Neither is required to define the authored field, and neither is decided here.
+
+The `LOWER_PRIORITY_POOL` `FIXED_AMOUNTS` destination sequence. It is expressly untouched: that field is authored inside a whole-pool rule rather than a bucket-owned one, so nothing here supplies it.
+
+The definition of "allocatable bucket" and the required-funding completeness predicate, which Decision 093 left open. `requiredFundingRules` still receives no product default.
+
+The `GOAL_POLICY` and `GOAL_UNTIL_TARGET` duplication recorded by Decision 086, and `RECURRING_BILL` underfunding behaviour, which Decision 074 declined. Everything Decision 096 left unresolved for the other families, including the `GLOBAL_OBLIGATION` cap.
+
+## Consequences
+
+Four families are authorable and four are not.
+
+The last unsourced member of `ResolvedFundingRule` has an accepted authored source, and the resolver has a truthful deterministic ordering source for the required stage.
+
+One Decision 082 sentence is superseded. Decision 082's ownership model, and every other holding of it, stand.
+
+`ResolvedFundingRule`, `FundingRuleConfig`, `ResolvedRuleSet`, `schemaVersion`, `sourceRuleVersionIds` and Plan Snapshot design are unchanged. No member is added, removed or made optional, so no incompatible persisted change arises and Decision 074's versioning rule is not triggered.
+
+Decisions 074, 076, 080, 081, 086, 087, 090, 093 and 096 are unamended.
+
+No specification text changes, no validator is authorised, no error code is registered, no registry changes, and no code is authorised by this decision.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
