@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type JSX } from 'react';
 
+import { DEFAULT_PAYCHECK_PLAN } from '@application/paycheck/paycheck-plan';
 import {
   previewPaycheckAllocation,
   type PaycheckPreview,
@@ -33,6 +34,11 @@ import './paycheck-preview-screen.css';
 export function PaycheckPreviewScreen(): JSX.Element {
   const [amount, setAmount] = useState('2,000.00');
   const [eventDate, setEventDate] = useState(todayIso());
+  const [givingPercent, setGivingPercent] = useState(DEFAULT_PAYCHECK_PLAN.givingPercent);
+  const [emergencyFundPerPaycheck, setEmergencyFundPerPaycheck] = useState(
+    DEFAULT_PAYCHECK_PLAN.emergencyFundPerPaycheck,
+  );
+  const [leftoverLabel, setLeftoverLabel] = useState(DEFAULT_PAYCHECK_PLAN.leftoverLabel);
   const [preview, setPreview] = useState<PaycheckPreview | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -40,6 +46,7 @@ export function PaycheckPreviewScreen(): JSX.Element {
     submitEvent.preventDefault();
 
     const result = previewPaycheckAllocation({
+      plan: { givingPercent, emergencyFundPerPaycheck, leftoverLabel },
       amount,
       eventDate,
       requestedAt: Date.now(),
@@ -68,6 +75,60 @@ export function PaycheckPreviewScreen(): JSX.Element {
       </header>
 
       <form onSubmit={onPreview} noValidate>
+        <fieldset>
+          <legend>Your plan</legend>
+
+          <div className="field">
+            <label htmlFor="giving-percent">Giving</label>
+            <div className="suffixed">
+              <input
+                id="giving-percent"
+                name="giving-percent"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={givingPercent}
+                onChange={(changeEvent) => {
+                  setGivingPercent(changeEvent.target.value);
+                }}
+              />
+              <span aria-hidden="true">% of each paycheck</span>
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="emergency-fund-amount">Emergency Fund</label>
+            <div className="suffixed">
+              <input
+                id="emergency-fund-amount"
+                name="emergency-fund-amount"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={emergencyFundPerPaycheck}
+                onChange={(changeEvent) => {
+                  setEmergencyFundPerPaycheck(changeEvent.target.value);
+                }}
+              />
+              <span aria-hidden="true">per paycheck</span>
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="leftover-label">Everything left over goes to</label>
+            <input
+              id="leftover-label"
+              name="leftover-label"
+              type="text"
+              autoComplete="off"
+              value={leftoverLabel}
+              onChange={(changeEvent) => {
+                setLeftoverLabel(changeEvent.target.value);
+              }}
+            />
+          </div>
+        </fieldset>
+
         <div className="field">
           <label htmlFor="paycheck-amount">Paycheck amount</label>
           <input
@@ -97,6 +158,8 @@ export function PaycheckPreviewScreen(): JSX.Element {
         </div>
 
         <button type="submit">Preview</button>
+
+        <p className="note">Preview settings reset when you reload the page.</p>
       </form>
 
       {error !== undefined && (

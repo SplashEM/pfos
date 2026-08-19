@@ -14,6 +14,11 @@ function enterPaycheck(amount: string, eventDate = '2026-01-15'): void {
   fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 }
 
+/** Edits one plan field without pressing Preview. */
+function editPlan(label: string, value: string): void {
+  fireEvent.change(screen.getByLabelText(label), { target: { value } });
+}
+
 /** The rendered rows as [label, amount] pairs, in display order. */
 function renderedRows(): readonly (readonly string[])[] {
   return screen.getAllByRole('row').flatMap((row) => {
@@ -78,7 +83,7 @@ describe('the paycheck preview screen', () => {
     render(<PaycheckPreviewScreen />);
     enterPaycheck('2000');
 
-    expect(screen.getByText('Emergency Fund')).toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getByText('Emergency Fund')).toBeInTheDocument();
     expect(screen.queryByText(/bucket-/)).not.toBeInTheDocument();
   });
 
@@ -128,5 +133,112 @@ describe('the paycheck preview screen', () => {
 
     expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Preview']);
     expect(screen.getByText(/Nothing is saved and no money moves/)).toBeInTheDocument();
+  });
+
+  it('says plainly that the settings do not survive a reload', () => {
+    render(<PaycheckPreviewScreen />);
+
+    expect(
+      screen.getByText('Preview settings reset when you reload the page.'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('editing the plan', () => {
+  it('offers the three plan controls with their starting values', () => {
+    render(<PaycheckPreviewScreen />);
+
+    expect(screen.getByLabelText('Giving')).toHaveValue('10');
+    expect(screen.getByLabelText('Emergency Fund')).toHaveValue('500.00');
+    expect(screen.getByLabelText('Everything left over goes to')).toHaveValue('Spending');
+  });
+
+  /*
+   * The whole point of the slice: a changed plan produces a changed answer, and
+   * it can only do so by reaching the authored rules, because nothing on this
+   * screen can multiply.
+   */
+  it('changes the preview when the giving percentage changes', () => {
+    render(<PaycheckPreviewScreen />);
+
+    enterPaycheck('2000');
+    expect(renderedRows()).toContainEqual(['Giving', '$200.00']);
+
+    editPlan('Giving', '12');
+    enterPaycheck('2000');
+
+    expect(renderedRows()).toEqual([
+      ['Giving', '$240.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,260.00'],
+      ['Total allocated', '$2,000.00'],
+      ['Unallocated', '$0.00'],
+    ]);
+  });
+
+  it('changes the preview when the emergency-fund amount changes', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Giving', '12');
+    editPlan('Emergency Fund', '600');
+    enterPaycheck('2000');
+
+    expect(renderedRows()).toEqual([
+      ['Giving', '$240.00'],
+      ['Emergency Fund', '$600.00'],
+      ['Spending', '$1,160.00'],
+      ['Total allocated', '$2,000.00'],
+      ['Unallocated', '$0.00'],
+    ]);
+  });
+
+  it('renames the leftover destination in the result', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Everything left over goes to', 'Everyday spending');
+    enterPaycheck('2000');
+
+    expect(renderedRows()).toContainEqual(['Everyday spending', '$1,300.00']);
+    expect(renderedRows()).not.toContainEqual(['Spending', '$1,300.00']);
+  });
+
+  it('explains a percentage it cannot use', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Giving', 'lots');
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Enter a percentage such as 10 or 12.5.');
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  /* The 0%-to-100% bound belongs to the domain, and its wording reaches the screen. */
+  it('explains a percentage above 100', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Giving', '150');
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('A rate must be between 0% and 100%.');
+  });
+
+  it('explains a negative funding amount', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Emergency Fund', '-100');
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('alert')).toHaveTextContent('A funding amount cannot be negative.');
+  });
+
+  it('explains a blank destination name', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Everything left over goes to', '  ');
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Name the destination that receives what is left.',
+    );
   });
 });

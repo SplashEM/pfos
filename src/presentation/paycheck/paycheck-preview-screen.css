@@ -39,10 +39,44 @@
   background: #fbfcfd;
 }
 
+.screen fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 0;
+  padding: 0 0 1.25rem;
+  border: 0;
+  border-bottom: 1px solid #e6e9ed;
+}
+
+.screen legend {
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #5a6069;
+}
+
 .screen .field {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.screen .suffixed {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.screen .suffixed input {
+  width: 7.5rem;
+}
+
+.screen .suffixed span {
+  font-size: 0.875rem;
+  color: #5a6069;
 }
 
 .screen label {
