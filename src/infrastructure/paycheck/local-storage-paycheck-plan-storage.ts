@@ -2,6 +2,7 @@ import type { EditablePaycheckPlanStorage } from '@application/paycheck/editable
 import {
   DEFAULT_PAYCHECK_PLAN,
   type EditablePaycheckPlan,
+  type EditablePriority,
 } from '@application/paycheck/paycheck-plan';
 
 /**
@@ -35,14 +36,28 @@ export const PAYCHECK_PLAN_STORAGE_KEY = 'pfos.preview-plan';
  * discarded rather than misread. It is not `ResolvedRuleSet.schemaVersion`, not
  * `PlanSnapshot.schemaVersion`, and not a domain persistence version: no
  * accepted contract is versioned here and no financial document is stored.
+ *
+ * Version 2 replaced version 1's single `emergencyFundPerPaycheck` string with a
+ * ranked `priorities` collection. A version 1 record cannot be read as one, so
+ * it is discarded and the person starts from the default plan — three
+ * disposable settings are not worth a migration path, and building one would be
+ * the financial-migration architecture this slice must not create.
  */
-export const PAYCHECK_PLAN_SETTINGS_VERSION = 1;
+export const PAYCHECK_PLAN_SETTINGS_VERSION = 2;
+
+/** One priority as written to storage. */
+interface StoredPriority {
+  readonly id: string;
+  readonly label: string;
+  readonly amountPerPaycheck: string;
+  readonly rank: number;
+}
 
 /** The record as written to storage. */
 interface StoredPaycheckPlan {
   readonly schemaVersion: number;
   readonly givingPercent: string;
-  readonly emergencyFundPerPaycheck: string;
+  readonly priorities: readonly StoredPriority[];
   readonly leftoverLabel: string;
 }
 
@@ -108,7 +123,12 @@ function saveEditablePaycheckPlan(plan: EditablePaycheckPlan): void {
   const record: StoredPaycheckPlan = {
     schemaVersion: PAYCHECK_PLAN_SETTINGS_VERSION,
     givingPercent: plan.givingPercent,
-    emergencyFundPerPaycheck: plan.emergencyFundPerPaycheck,
+    priorities: plan.priorities.map((priority) => ({
+      id: priority.id,
+      label: priority.label,
+      amountPerPaycheck: priority.amountPerPaycheck,
+      rank: priority.rank,
+    })),
     leftoverLabel: plan.leftoverLabel,
   };
 
@@ -156,16 +176,58 @@ function toStoredPlan(value: unknown): EditablePaycheckPlan | undefined {
   }
 
   const givingPercent = record['givingPercent'];
-  const emergencyFundPerPaycheck = record['emergencyFundPerPaycheck'];
   const leftoverLabel = record['leftoverLabel'];
 
-  if (
-    typeof givingPercent !== 'string' ||
-    typeof emergencyFundPerPaycheck !== 'string' ||
-    typeof leftoverLabel !== 'string'
-  ) {
+  if (typeof givingPercent !== 'string' || typeof leftoverLabel !== 'string') {
     return undefined;
   }
 
-  return { givingPercent, emergencyFundPerPaycheck, leftoverLabel };
+  const priorities = toPriorities(record['priorities']);
+  if (priorities === undefined) {
+    return undefined;
+  }
+
+  return { givingPercent, priorities, leftoverLabel };
+}
+
+/**
+ * Narrows the stored priority list, or `undefined`.
+ *
+ * An empty list is valid: Decision 075 accepts a plan with no top priorities.
+ * One bad entry discards the whole list, and with it the whole record, for the
+ * same reason a missing field does — a plan holding some of a person's
+ * priorities and none of the rest would be worse than starting over.
+ */
+function toPriorities(value: unknown): readonly EditablePriority[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const priorities: EditablePriority[] = [];
+
+  for (const entry of value as readonly unknown[]) {
+    if (typeof entry !== 'object' || entry === null) {
+      return undefined;
+    }
+
+    const priority = entry as Record<string, unknown>;
+    const id = priority['id'];
+    const label = priority['label'];
+    const amountPerPaycheck = priority['amountPerPaycheck'];
+    const rank = priority['rank'];
+
+    if (
+      typeof id !== 'string' ||
+      typeof label !== 'string' ||
+      typeof amountPerPaycheck !== 'string' ||
+      typeof rank !== 'number' ||
+      !Number.isInteger(rank)
+    ) {
+      return undefined;
+    }
+
+    priorities.push({ id, label, amountPerPaycheck, rank });
+  }
+
+  return priorities;
 }

@@ -1,5 +1,8 @@
 import type { Rule } from '@domain/rules/contracts/rule';
-import type { RuleConfiguration } from '@domain/rules/contracts/rule-configuration';
+import type {
+  AuthoredTopPriorityEntry,
+  RuleConfiguration,
+} from '@domain/rules/contracts/rule-configuration';
 import type { RuleVersion } from '@domain/rules/contracts/rule-version';
 import type { AuthoredRuleVersions } from '@domain/rules/services/resolve-rule-set';
 import { financialDate, type FinancialDate } from '@domain/shared/dates/financial-date';
@@ -15,35 +18,78 @@ import { fromPercent, type BasisPoints } from '@domain/shared/percentages/basis-
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
 
 /**
- * The few plan values a person can currently change.
+ * One thing a person wants funded before everything else.
  *
- * Each is held as typed text and parsed here, so the screen stores what was
- * typed and this layer owns every conversion. Nothing above parses money or a
- * rate, and nothing below sees a string.
+ * A priority is a single product idea covering two authored rules. Adding one
+ * creates a `TOP_PRIORITIES` member and the bucket-owned `REQUIRED_FUNDING` rule
+ * that says how much it wants; the two are never offered separately, because a
+ * funding rule for a bucket no stage funds is exactly what the resolver refuses.
+ *
+ * `id` is the bucket's identity and never changes. A rename changes `label` and
+ * nothing else, so the authored rules keep pointing at the same bucket:
+ * PFOS-ENG-00 §14 keeps an identifier opaque and PFOS-ENG-01 §26 forbids
+ * resolution from depending on a display name.
+ *
+ * `rank` is the person's explicit ordering, carried per priority rather than
+ * implied by where the priority sits in a list. Decision 087 requires an
+ * authored rank and Decision 080 excludes array position, so the value travels
+ * as its own field from the moment it is chosen: reordering the collection
+ * without changing ranks changes nothing about the money.
+ */
+export interface EditablePriority {
+  /** Stable identity, also the bucket the rules address. */
+  readonly id: string;
+  /** What to call it on screen. */
+  readonly label: string;
+  /** A dollar amount as typed, such as `500` or `$1,250.00`. */
+  readonly amountPerPaycheck: string;
+  /** The person's explicit ordering. Lower is funded first. */
+  readonly rank: number;
+}
+
+/**
+ * The plan values a person can currently change.
+ *
+ * Each text field is held as typed and parsed here, so the screen stores what
+ * was typed and this layer owns every conversion. Nothing above parses money or
+ * a rate, and nothing below sees a string.
  *
  * This is not the authoring system. Rule authoring covers owners, slot kinds,
- * strategies, applicability, effective periods and lifecycle; this covers three
- * numbers and a name, chosen because they are the values that visibly move the
- * answer in the one scenario PFOS can currently preview. Everything else about
+ * strategies, applicability, effective periods and lifecycle; this covers a
+ * giving rate, a ranked list of priorities and one name. Everything else about
  * the plan stays fixed, and the authored rules built below are the same shape a
  * real authoring system will produce.
- *
- * Edits live for as long as the page does. Nothing here persists, and no part of
- * the product suggests otherwise.
  */
 export interface EditablePaycheckPlan {
   /** A plain percentage as typed, such as `10` or `12.5`. */
   readonly givingPercent: string;
-  /** A dollar amount as typed, such as `500` or `$1,250.00`. */
-  readonly emergencyFundPerPaycheck: string;
+  /** What gets funded first, in the person's own order. */
+  readonly priorities: readonly EditablePriority[];
   /** What to call the bucket that receives whatever is left. */
   readonly leftoverLabel: string;
 }
 
+/**
+ * The most top priorities V1 allows.
+ *
+ * PFOS-ENG-01 §13.1 limits a plan to three, and Decision 076 makes exceeding it
+ * a hard validation error the resolver already reports. This constant is here so
+ * the screen can stop offering a fourth rather than let a person build a plan
+ * that will be refused; the domain remains the thing that enforces it.
+ */
+export const MAXIMUM_TOP_PRIORITIES = 3;
+
 /** The plan a person starts from, before changing anything. */
 export const DEFAULT_PAYCHECK_PLAN: EditablePaycheckPlan = {
   givingPercent: '10',
-  emergencyFundPerPaycheck: '500.00',
+  priorities: [
+    {
+      id: 'bucket-emergency-fund',
+      label: 'Emergency Fund',
+      amountPerPaycheck: '500.00',
+      rank: 1,
+    },
+  ],
   leftoverLabel: 'Spending',
 };
 
@@ -53,17 +99,8 @@ export interface AuthoredPaycheckPlan {
   readonly labels: Readonly<Record<EntityId, string>>;
 }
 
-/**
- * Bucket identities are stable across every edit.
- *
- * Renaming a destination changes what a person is shown and nothing else: the
- * bucket keeps its identifier, so the authored rules keep pointing at the same
- * bucket and no edit mints an entity. PFOS-ENG-00 §14 keeps identifiers opaque
- * and PFOS-ENG-01 §26 forbids resolution from depending on a display name,
- * which is exactly why a label can change freely.
- */
+/** Bucket identities that are not a priority, and so are not editable. */
 export const GIVING_BUCKET = asEntityId('bucket-giving');
-export const EMERGENCY_FUND_BUCKET = asEntityId('bucket-emergency-fund');
 export const LEFTOVER_BUCKET = asEntityId('bucket-leftover');
 
 /**
@@ -92,11 +129,15 @@ const AUTHORED_ON: FinancialDate = (() => {
  * `resolveRuleSet` exactly as a stored plan would. Nothing here resolves,
  * allocates, or decides an order.
  *
- * The plan is deliberately the narrow one the resolver can answer: one rule per
- * slot, so no same-level contention arises; one obligation, so no canonical
- * ordering question arises; and the only funding requirement belongs to the
- * only top priority, so no REQUIRED_RECURRING stage is needed. Editing the
- * three values below cannot move it out of that shape.
+ * Every priority produces two rules, and never one without the other. A
+ * `TOP_PRIORITIES` member gives it a place in the funding order; the
+ * bucket-owned `REQUIRED_FUNDING` rule gives it an amount. The resolver refuses
+ * a funding rule whose bucket no emitted stage funds, so a bucket that is not a
+ * top priority is not something this layer can build.
+ *
+ * The plan stays inside the shape the resolver can answer: one obligation, one
+ * top-priority rule, one leftover policy, and a funding rule only for buckets
+ * that are top priorities. Editing cannot move it out of that shape.
  */
 export function buildAuthoredPaycheckPlan(
   plan: EditablePaycheckPlan,
@@ -106,9 +147,9 @@ export function buildAuthoredPaycheckPlan(
     return givingRate;
   }
 
-  const emergencyFundAmount = parseFundingAmount(plan.emergencyFundPerPaycheck);
-  if (!emergencyFundAmount.ok) {
-    return emergencyFundAmount;
+  const priorities = parsePriorities(plan.priorities);
+  if (!priorities.ok) {
+    return priorities;
   }
 
   const leftoverLabel = plan.leftoverLabel.trim();
@@ -123,19 +164,67 @@ export function buildAuthoredPaycheckPlan(
     );
   }
 
+  const labels: Record<string, string> = {
+    [GIVING_BUCKET]: 'Giving',
+    [LEFTOVER_BUCKET]: leftoverLabel,
+  };
+
+  for (const priority of priorities.value) {
+    labels[priority.bucketId] = priority.label;
+  }
+
   return ok({
     rules: [
       givingRule(givingRate.value),
-      topPriorityRule(),
-      emergencyFundRule(emergencyFundAmount.value),
+      ...topPriorityRules(priorities.value),
+      ...priorities.value.map(fundingRule),
       leftoverRule(),
     ],
-    labels: {
-      [GIVING_BUCKET]: 'Giving',
-      [EMERGENCY_FUND_BUCKET]: 'Emergency Fund',
-      [LEFTOVER_BUCKET]: leftoverLabel,
-    },
+    labels,
   });
+}
+
+/** One priority with its text turned into the values the rules need. */
+interface ParsedPriority {
+  readonly bucketId: EntityId;
+  readonly label: string;
+  readonly amount: Money;
+  readonly rank: number;
+}
+
+/** Reads every priority, failing on the first one a person needs to fix. */
+function parsePriorities(
+  priorities: readonly EditablePriority[],
+): Result<readonly ParsedPriority[], DomainError> {
+  const parsed: ParsedPriority[] = [];
+
+  for (const priority of priorities) {
+    const label = priority.label.trim();
+    if (label === '') {
+      return err(
+        domainError({
+          code: APPLICATION_ERROR_CODES.APPLICATION_PLAN_PRIORITY_LABEL_EMPTY,
+          category: ERROR_CATEGORIES.VALIDATION,
+          summary: 'Give every priority a name.',
+          details: 'A priority was left without a label.',
+        }),
+      );
+    }
+
+    const amount = parseFundingAmount(priority.amountPerPaycheck);
+    if (!amount.ok) {
+      return amount;
+    }
+
+    parsed.push({
+      bucketId: asEntityId(priority.id),
+      label,
+      amount: amount.value,
+      rank: priority.rank,
+    });
+  }
+
+  return ok(parsed);
 }
 
 const PERCENT_PATTERN = /^([0-9]{1,3})(?:[.]([0-9]{1,2}))?$/;
@@ -218,35 +307,75 @@ function givingRule(rateBasisPoints: BasisPoints): AuthoredRuleVersions {
   };
 }
 
-/** "Emergency Fund comes first." */
-function topPriorityRule(): AuthoredRuleVersions {
-  return {
-    rule: rule('rule-top-priorities', GLOBAL, 'TOP_PRIORITIES'),
-    versions: [
-      version('rule-top-priorities', 'rule-version-top-priorities-1', {
-        slotKind: 'TOP_PRIORITIES',
-        strategy: 'SEQUENTIAL',
-        entries: [{ bucketId: EMERGENCY_FUND_BUCKET, rank: 1 }],
-      }),
-    ],
-  };
+/**
+ * "These come first, in this order."
+ *
+ * Decision 082 makes this one `GLOBAL` rule carrying the whole member set, so
+ * there is exactly one of these however many priorities a person has — or none
+ * at all, which Decision 075 accepts as a valid plan that resolves with a
+ * warning rather than a failure.
+ *
+ * Each member carries its own explicit `rank`, taken from the person's ordering
+ * choice. Position in the array expresses nothing, which is what Decision 087
+ * requires.
+ */
+function topPriorityRules(priorities: readonly ParsedPriority[]): readonly AuthoredRuleVersions[] {
+  if (priorities.length === 0) {
+    return [];
+  }
+
+  const entries: readonly AuthoredTopPriorityEntry[] = priorities.map((priority) => ({
+    bucketId: priority.bucketId,
+    rank: priority.rank,
+  }));
+
+  return [
+    {
+      rule: rule('rule-top-priorities', GLOBAL, 'TOP_PRIORITIES'),
+      versions: [
+        version('rule-top-priorities', 'rule-version-top-priorities-1', {
+          slotKind: 'TOP_PRIORITIES',
+          strategy: 'SEQUENTIAL',
+          entries,
+        }),
+      ],
+    },
+  ];
 }
 
-/** "Put this much into it every paycheck." */
-function emergencyFundRule(amount: Money): AuthoredRuleVersions {
+/**
+ * "Put this much into it every paycheck."
+ *
+ * `sequence` and `rank` both carry the same explicit ordering, because this
+ * product offers one ordering control and a person moving a priority up is
+ * authoring one intention. Neither is derived from array position, an
+ * identifier, repository order or storage order — the values Decision 080
+ * excludes — and both are written as explicit integers into authored
+ * configuration, which is what Decision 097 requires of `sequence` and
+ * Decision 087 of `rank`.
+ *
+ * They are equal here rather than identical in meaning. `rank` orders top
+ * priorities within their stage; `sequence` is the competition order of
+ * bucket-owned funding rules, which Decision 097 says nothing further
+ * constrains. A later product that offered two ordering controls could author
+ * them apart without contradicting anything decided.
+ *
+ * `isProtected` and `allowExcessAboveCapacity` keep the values this plan has
+ * always authored. Decision 097 makes both explicit authored booleans, and no
+ * control for either is introduced here.
+ */
+function fundingRule(priority: ParsedPriority): AuthoredRuleVersions {
+  const ruleId = `rule-funding-${priority.bucketId}`;
+
   return {
-    rule: rule(
-      'rule-emergency-fund',
-      { ownerType: 'BUCKET', ownerId: EMERGENCY_FUND_BUCKET },
-      'REQUIRED_FUNDING',
-    ),
+    rule: rule(ruleId, { ownerType: 'BUCKET', ownerId: priority.bucketId }, 'REQUIRED_FUNDING'),
     versions: [
-      version('rule-emergency-fund', 'rule-version-emergency-fund-1', {
+      version(ruleId, `rule-version-funding-${priority.bucketId}`, {
         slotKind: 'REQUIRED_FUNDING',
-        sequence: 1,
+        sequence: priority.rank,
         isProtected: false,
         allowExcessAboveCapacity: false,
-        funding: { type: 'FIXED_PER_PAYCHECK', amount },
+        funding: { type: 'FIXED_PER_PAYCHECK', amount: priority.amount },
       }),
     ],
   };

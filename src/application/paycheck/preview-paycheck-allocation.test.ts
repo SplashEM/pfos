@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
-import { DEFAULT_PAYCHECK_PLAN, type EditablePaycheckPlan } from './paycheck-plan';
+import {
+  DEFAULT_PAYCHECK_PLAN,
+  type EditablePaycheckPlan,
+  type EditablePriority,
+} from './paycheck-plan';
 import {
   previewPaycheckAllocation,
   type PaycheckPreviewRequest,
@@ -24,6 +28,26 @@ function request(overrides: Partial<PaycheckPreviewRequest> = {}): PaycheckPrevi
 /** The default plan with one value replaced. */
 function planWith(overrides: Partial<EditablePaycheckPlan>): EditablePaycheckPlan {
   return { ...DEFAULT_PAYCHECK_PLAN, ...overrides };
+}
+
+/** A priority, spelled out so each test says what it is funding. */
+function priority(
+  id: string,
+  label: string,
+  amountPerPaycheck: string,
+  rank: number,
+): EditablePriority {
+  return { id, label, amountPerPaycheck, rank };
+}
+
+/** The Emergency Fund priority at rank 1, asking for a given amount. */
+function emergencyFund(amountPerPaycheck: string): EditablePriority {
+  return priority('bucket-emergency-fund', 'Emergency Fund', amountPerPaycheck, 1);
+}
+
+/** The default plan with its priorities replaced. */
+function planWithPriorities(...priorities: readonly EditablePriority[]): EditablePaycheckPlan {
+  return planWith({ priorities });
 }
 
 /** Unwraps a successful preview, failing loudly if it was rejected. */
@@ -114,7 +138,7 @@ describe('editing the plan changes the authored rules', () => {
   });
 
   it('changes the requirement when the emergency-fund amount changes', () => {
-    expect(split(planWith({ givingPercent: '12', emergencyFundPerPaycheck: '600' }))).toEqual([
+    expect(split(planWith({ givingPercent: '12', priorities: [emergencyFund('600')] }))).toEqual([
       ['Giving', '$240.00'],
       ['Emergency Fund', '$600.00'],
       ['Spending', '$1,160.00'],
@@ -165,6 +189,119 @@ describe('editing the plan changes the authored rules', () => {
   });
 });
 
+describe('managing more than one priority', () => {
+  /** The preview as [label, amount] pairs, in display order. */
+  function split(plan: EditablePaycheckPlan): readonly (readonly string[])[] {
+    return preview(request({ plan })).lines.map((line) => [line.label, line.amount]);
+  }
+
+  const laptop = (amount: string, rank: number): EditablePriority =>
+    priority('bucket-laptop', 'Laptop', amount, rank);
+
+  it('funds two priorities and leaves the rest', () => {
+    expect(split(planWithPriorities(emergencyFund('500'), laptop('300', 2)))).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Laptop', '$300.00'],
+      ['Spending', '$1,000.00'],
+    ]);
+  });
+
+  /*
+   * A fully funded paycheck hides the ordering, because everything is paid
+   * whatever the order. This one cannot pay both: after $120 of giving, $1,080
+   * remains against $1,300 of requirements, so the second priority is the one
+   * that goes short. That is the shipped SEQUENTIAL behaviour — fund rank 1,
+   * then rank 2, stop when the money runs out — and nothing new is invented for
+   * it here.
+   */
+  it('funds the higher rank first when the paycheck cannot cover both', () => {
+    const plan = planWithPriorities(emergencyFund('1000'), laptop('300', 2));
+
+    expect(
+      preview(request({ plan, amount: '1200' })).lines.map((line) => [line.label, line.amount]),
+    ).toEqual([
+      ['Giving', '$120.00'],
+      ['Emergency Fund', '$1,000.00'],
+      ['Laptop', '$80.00'],
+    ]);
+  });
+
+  /* Reordering the same two priorities changes who goes short. */
+  it('funds the other one first once the order is reversed', () => {
+    const plan = planWithPriorities(
+      priority('bucket-emergency-fund', 'Emergency Fund', '1000', 2),
+      laptop('300', 1),
+    );
+
+    expect(
+      preview(request({ plan, amount: '1200' })).lines.map((line) => [line.label, line.amount]),
+    ).toEqual([
+      ['Giving', '$120.00'],
+      ['Laptop', '$300.00'],
+      ['Emergency Fund', '$780.00'],
+    ]);
+  });
+
+  it('funds three priorities', () => {
+    const plan = planWithPriorities(
+      emergencyFund('500'),
+      laptop('300', 2),
+      priority('bucket-travel', 'Travel', '200', 3),
+    );
+
+    expect(split(plan)).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Laptop', '$300.00'],
+      ['Travel', '$200.00'],
+      ['Spending', '$800.00'],
+    ]);
+  });
+
+  /* Decision 076's limit is the domain's, and its answer reaches the caller. */
+  it('refuses a fourth priority with the domain limit', () => {
+    const plan = planWithPriorities(
+      emergencyFund('100'),
+      laptop('100', 2),
+      priority('bucket-travel', 'Travel', '100', 3),
+      priority('bucket-gifts', 'Gifts', '100', 4),
+    );
+
+    expect(rejected(request({ plan })).code).toBe('RULE_TOP_PRIORITY_COUNT_ABOVE_MAXIMUM');
+  });
+
+  /* Decision 076 again: two priorities must not share a rank. */
+  it('refuses two priorities sharing a rank', () => {
+    const plan = planWithPriorities(emergencyFund('500'), laptop('300', 1));
+
+    expect(rejected(request({ plan })).code).toBe('RULE_TOP_PRIORITY_DUPLICATE_RANK');
+  });
+
+  /* Decision 075: a plan with no top priorities resolves rather than failing. */
+  it('allows a plan with no priorities at all', () => {
+    expect(split(planWithPriorities())).toEqual([
+      ['Giving', '$200.00'],
+      ['Spending', '$1,800.00'],
+    ]);
+  });
+
+  /* Identity is the id, so a rename moves no money and mints no bucket. */
+  it('keeps the same bucket when a priority is renamed', () => {
+    const before = preview(request({ plan: planWithPriorities(emergencyFund('500')) }));
+    const after = preview(
+      request({
+        plan: planWithPriorities(priority('bucket-emergency-fund', 'Rainy day', '500', 1)),
+      }),
+    );
+
+    expect(after.lines.map((line) => line.bucketId)).toEqual(
+      before.lines.map((line) => line.bucketId),
+    );
+    expect(after.lines.map((line) => line.label)).toContain('Rainy day');
+  });
+});
+
 describe('plan values a person can correct', () => {
   it('rejects a percentage that is not a number', () => {
     expect(rejected(request({ plan: planWith({ givingPercent: 'ten' }) })).code).toBe(
@@ -192,21 +329,27 @@ describe('plan values a person can correct', () => {
     );
   });
 
-  it('rejects an emergency-fund amount that is not money', () => {
+  it('rejects a priority amount that is not money', () => {
     expect(
-      rejected(request({ plan: planWith({ emergencyFundPerPaycheck: 'five hundred' }) })).code,
+      rejected(request({ plan: planWithPriorities(emergencyFund('five hundred')) })).code,
     ).toBe('MONEY_PARSE_INVALID_FORMAT');
   });
 
-  it('rejects a negative emergency-fund amount', () => {
-    expect(rejected(request({ plan: planWith({ emergencyFundPerPaycheck: '-100' }) })).code).toBe(
+  it('rejects a negative priority amount', () => {
+    expect(rejected(request({ plan: planWithPriorities(emergencyFund('-100')) })).code).toBe(
       APPLICATION_ERROR_CODES.APPLICATION_PLAN_FUNDING_AMOUNT_NEGATIVE,
     );
   });
 
+  it('rejects a priority with no name', () => {
+    expect(
+      rejected(request({ plan: planWithPriorities(priority('bucket-a', '  ', '500', 1)) })).code,
+    ).toBe(APPLICATION_ERROR_CODES.APPLICATION_PLAN_PRIORITY_LABEL_EMPTY);
+  });
+
   /* Zero funds nothing, which is representable rather than invalid. */
-  it('accepts an emergency-fund amount of zero', () => {
-    const result = preview(request({ plan: planWith({ emergencyFundPerPaycheck: '0' }) }));
+  it('accepts a priority amount of zero', () => {
+    const result = preview(request({ plan: planWithPriorities(emergencyFund('0')) }));
 
     expect(result.lines.map((line) => [line.label, line.amount])).toEqual([
       ['Giving', '$200.00'],

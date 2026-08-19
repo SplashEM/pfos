@@ -15,7 +15,10 @@ const storage = createLocalStoragePaycheckPlanStorage();
 
 const EDITED: EditablePaycheckPlan = {
   givingPercent: '12',
-  emergencyFundPerPaycheck: '600',
+  priorities: [
+    { id: 'bucket-emergency-fund', label: 'Emergency Fund', amountPerPaycheck: '600', rank: 1 },
+    { id: 'bucket-laptop', label: 'Laptop', amountPerPaycheck: '300', rank: 2 },
+  ],
   leftoverLabel: 'Everyday spending',
 };
 
@@ -85,6 +88,84 @@ describe('loading saved preview settings', () => {
     expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
   });
 
+  it('falls back to the defaults when the priority list is not a list', () => {
+    writeRaw(
+      JSON.stringify({
+        schemaVersion: PAYCHECK_PLAN_SETTINGS_VERSION,
+        givingPercent: '12',
+        priorities: 'Emergency Fund',
+        leftoverLabel: 'Everyday spending',
+      }),
+    );
+
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
+  });
+
+  /* One bad entry discards the whole list, and with it the whole record. */
+  it('falls back to the defaults when one priority is malformed', () => {
+    writeRaw(
+      JSON.stringify({
+        schemaVersion: PAYCHECK_PLAN_SETTINGS_VERSION,
+        givingPercent: '12',
+        priorities: [
+          { id: 'a', label: 'Emergency Fund', amountPerPaycheck: '600', rank: 1 },
+          { id: 'b', label: 'Laptop', amountPerPaycheck: '300' },
+        ],
+        leftoverLabel: 'Everyday spending',
+      }),
+    );
+
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
+  });
+
+  it('falls back to the defaults when a rank is not a whole number', () => {
+    writeRaw(
+      JSON.stringify({
+        schemaVersion: PAYCHECK_PLAN_SETTINGS_VERSION,
+        givingPercent: '12',
+        priorities: [{ id: 'a', label: 'Emergency Fund', amountPerPaycheck: '600', rank: 1.5 }],
+        leftoverLabel: 'Everyday spending',
+      }),
+    );
+
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
+  });
+
+  /* Decision 075 accepts a plan with no top priorities, so an empty list is real data. */
+  it('restores a plan that has no priorities', () => {
+    const empty: EditablePaycheckPlan = { ...EDITED, priorities: [] };
+    storage.save(empty);
+
+    expect(storage.load()).toEqual(empty);
+  });
+
+  it('restores priorities in the order and ranks they were saved with', () => {
+    storage.save(EDITED);
+
+    expect(storage.load().priorities.map((entry) => [entry.label, entry.rank])).toEqual([
+      ['Emergency Fund', 1],
+      ['Laptop', 2],
+    ]);
+  });
+
+  /*
+   * A version 1 record held a single emergencyFundPerPaycheck string and cannot
+   * be read as a ranked list. It is discarded rather than migrated: three
+   * disposable settings do not earn a migration path.
+   */
+  it('discards a record written before priorities existed', () => {
+    writeRaw(
+      JSON.stringify({
+        schemaVersion: 1,
+        givingPercent: '12',
+        emergencyFundPerPaycheck: '600',
+        leftoverLabel: 'Everyday spending',
+      }),
+    );
+
+    expect(storage.load()).toEqual(DEFAULT_PAYCHECK_PLAN);
+  });
+
   it('falls back to the defaults when a field is not text', () => {
     writeRaw(
       JSON.stringify({
@@ -106,7 +187,7 @@ describe('loading saved preview settings', () => {
   it('restores values without judging whether they are usable', () => {
     const unusable: EditablePaycheckPlan = {
       givingPercent: '150',
-      emergencyFundPerPaycheck: '-5',
+      priorities: [{ id: 'a', label: 'Something', amountPerPaycheck: '-5', rank: 1 }],
       leftoverLabel: 'Somewhere',
     };
 
@@ -126,7 +207,10 @@ describe('saving preview settings', () => {
     expect(JSON.parse(raw ?? '')).toEqual({
       schemaVersion: PAYCHECK_PLAN_SETTINGS_VERSION,
       givingPercent: '12',
-      emergencyFundPerPaycheck: '600',
+      priorities: [
+        { id: 'bucket-emergency-fund', label: 'Emergency Fund', amountPerPaycheck: '600', rank: 1 },
+        { id: 'bucket-laptop', label: 'Laptop', amountPerPaycheck: '300', rank: 2 },
+      ],
       leftoverLabel: 'Everyday spending',
     });
   });
@@ -139,9 +223,9 @@ describe('saving preview settings', () => {
     const stored: unknown = JSON.parse(raw);
 
     expect(Object.keys(stored as Record<string, unknown>).sort()).toEqual([
-      'emergencyFundPerPaycheck',
       'givingPercent',
       'leftoverLabel',
+      'priorities',
       'schemaVersion',
     ]);
     expect(raw).not.toContain('resolvedRuleSet');

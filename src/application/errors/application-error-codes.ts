@@ -71,6 +71,16 @@ export const APPLICATION_ERROR_CODES = {
    * financial one — but a preview whose destination has no name cannot be read.
    */
   APPLICATION_PLAN_LEFTOVER_LABEL_EMPTY: 'APPLICATION_PLAN_LEFTOVER_LABEL_EMPTY',
+
+  /*
+   * A priority was left without a name to show.
+   *
+   * Like the leftover label this is a display name rather than an identity — a
+   * priority keeps its own stable identifier however it is renamed — but a
+   * funding line with no name cannot be read, and a person cannot tell two
+   * unnamed priorities apart.
+   */
+  APPLICATION_PLAN_PRIORITY_LABEL_EMPTY: 'APPLICATION_PLAN_PRIORITY_LABEL_EMPTY',
 } as const;
 
 export type ApplicationErrorCode =
