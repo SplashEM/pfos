@@ -81,6 +81,72 @@ export const APPLICATION_ERROR_CODES = {
    * unnamed priorities apart.
    */
   APPLICATION_PLAN_PRIORITY_LABEL_EMPTY: 'APPLICATION_PLAN_PRIORITY_LABEL_EMPTY',
+
+  /*
+   * A stored confirmed financial record could not be read as a valid record.
+   *
+   * Decision 098 holding 8: a malformed record produces an explicit read
+   * failure and the stored data is left untouched. It is never defaulted,
+   * repaired, partially accepted, deleted or reinterpreted, which is the point
+   * on which a financial record differs from the disposable preview settings.
+   *
+   * Reported on the way in as well as on the way out. A record that fails
+   * validation is not written, so a malformed value cannot become a stored one.
+   */
+  APPLICATION_CONFIRMED_RECORD_MALFORMED: 'APPLICATION_CONFIRMED_RECORD_MALFORMED',
+
+  /*
+   * A stored confirmed record declared a schema version this build does not
+   * read.
+   *
+   * Decision 098 holding 8 names an unrecognised `schemaVersion` as a read
+   * failure. No compatibility reader and no read-migration exists, and neither
+   * is implied here: this reports that the record was not read, and the bytes
+   * stay where they are.
+   */
+  APPLICATION_CONFIRMED_RECORD_UNSUPPORTED_SCHEMA_VERSION:
+    'APPLICATION_CONFIRMED_RECORD_UNSUPPORTED_SCHEMA_VERSION',
+
+  /*
+   * A confirmed allocation's totals did not conserve the paycheck.
+   *
+   * PFOS-ENG-00 §32 Invariant 1: income equals allocated plus unallocated,
+   * exactly to the cent. A stored record that breaks it is not a record of any
+   * allocation that happened, so it is refused rather than shown.
+   */
+  APPLICATION_CONFIRMED_RECORD_CONSERVATION_VIOLATED:
+    'APPLICATION_CONFIRMED_RECORD_CONSERVATION_VIOLATED',
+
+  /*
+   * A confirmed allocation named a Plan Snapshot that is not stored.
+   *
+   * PFOS-ENG-00 §32 Invariant 12 requires every reference in a confirmed record
+   * to resolve, and Invariant 9 ties a historical operation to its snapshot. An
+   * allocation whose snapshot is missing cannot be interpreted without falling
+   * back to current rules, which Decision 098 holding 4 forbids.
+   */
+  APPLICATION_CONFIRMATION_SNAPSHOT_MISSING: 'APPLICATION_CONFIRMATION_SNAPSHOT_MISSING',
+
+  /*
+   * A confirmation could not be written.
+   *
+   * Decision 098 holding 1 makes one confirmation one atomic operation: if
+   * either record cannot be written, neither is committed. This reports that
+   * nothing was stored, so a caller never has to guess whether half of a
+   * confirmation survived.
+   */
+  APPLICATION_CONFIRMATION_WRITE_FAILED: 'APPLICATION_CONFIRMATION_WRITE_FAILED',
+
+  /*
+   * A stored confirmation could not be reached.
+   *
+   * The database itself refused the read — unavailable, blocked, or closed
+   * underneath the caller. It says nothing about the contents of any record:
+   * a record that was read but could not be understood is
+   * `APPLICATION_CONFIRMED_RECORD_MALFORMED` instead, and nothing stored is
+   * modified in either case.
+   */
+  APPLICATION_CONFIRMATION_READ_FAILED: 'APPLICATION_CONFIRMATION_READ_FAILED',
 } as const;
 
 export type ApplicationErrorCode =
