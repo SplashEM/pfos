@@ -257,6 +257,28 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Confirming is a step apart from reading the preview above it. */
+.screen .confirm {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid #ecedf0;
+}
+
+.screen .confirm .note {
+  margin-top: 0.5rem;
+}
+
+/* A record was written. Calm rather than celebratory: nothing moved. */
+.screen .confirmed {
+  margin: 0.875rem 0 0;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  color: #1f4d2c;
+  background: #f1f7f2;
+  border: 1px solid #cfe3d4;
+  border-radius: 0.375rem;
+}
+
 .screen .note {
   margin-top: 1rem;
   font-size: 0.8125rem;

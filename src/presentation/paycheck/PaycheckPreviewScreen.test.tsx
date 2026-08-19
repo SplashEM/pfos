@@ -6,6 +6,15 @@ import {
   DEFAULT_PAYCHECK_PLAN,
   type EditablePaycheckPlan,
 } from '@application/paycheck/paycheck-plan';
+import type {
+  AllocationRecord,
+  PlanSnapshotRecord,
+} from '@application/persistence/confirmed-paycheck-records';
+import type { ConfirmedPaycheckStore } from '@application/persistence/confirmed-paycheck-store';
+import { domainError } from '@domain/shared/errors/domain-error';
+import { err, ok } from '@domain/shared/errors/result';
+import { asEntityId } from '@domain/shared/ids/entity-id';
+import type { IdGenerator } from '@domain/shared/ids/id-generator';
 
 import { PaycheckPreviewScreen } from './PaycheckPreviewScreen';
 
@@ -31,15 +40,118 @@ function createMemoryPlanStorage(): EditablePaycheckPlanStorage {
   };
 }
 
+/**
+ * An in-memory stand-in for the confirmed-paycheck store.
+ *
+ * It keeps whole records the way the real adapter does, and refuses to overwrite
+ * an identifier for the same reason, but it is not the adapter: validation,
+ * atomicity and IndexedDB itself are proved against the real implementation in
+ * its own tests and in the browser suite. What these tests are about is what
+ * the screen does with the contract.
+ */
+function createMemoryConfirmedPaycheckStore(): ConfirmedPaycheckStore & {
+  fail: (summary?: string) => void;
+  saved: () => number;
+} {
+  const snapshots = new Map<string, PlanSnapshotRecord>();
+  const allocations: AllocationRecord[] = [];
+  let failure: string | undefined;
+
+  function refuse(summary: string) {
+    return err(
+      domainError({
+        code: 'APPLICATION_CONFIRMATION_WRITE_FAILED',
+        category: 'PERSISTENCE',
+        summary,
+      }),
+    );
+  }
+
+  return {
+    fail: (summary = 'This paycheck was not saved. Nothing was recorded.') => {
+      failure = summary;
+    },
+    saved: () => allocations.length,
+    saveConfirmation: (records) => {
+      if (failure !== undefined) {
+        return Promise.resolve(refuse(failure));
+      }
+      if (allocations.some((entry) => entry.id === records.allocation.id)) {
+        return Promise.resolve(refuse('This paycheck was not saved. Nothing was recorded.'));
+      }
+
+      snapshots.set(records.snapshot.id, records.snapshot);
+      allocations.push(records.allocation);
+
+      return Promise.resolve(ok(undefined));
+    },
+    readConfirmation: (allocationId) => {
+      const allocation = allocations.find((entry) => entry.id === allocationId);
+      const snapshot =
+        allocation === undefined ? undefined : snapshots.get(allocation.planSnapshotId);
+
+      return Promise.resolve(
+        ok(
+          allocation === undefined || snapshot === undefined ? undefined : { snapshot, allocation },
+        ),
+      );
+    },
+    readLatestConfirmation: () => {
+      const allocation = [...allocations].sort(
+        (a, b) =>
+          a.confirmedAt.epochMilliseconds - b.confirmedAt.epochMilliseconds ||
+          a.id.localeCompare(b.id),
+      )[allocations.length - 1];
+      const snapshot =
+        allocation === undefined ? undefined : snapshots.get(allocation.planSnapshotId);
+
+      return Promise.resolve(
+        ok(
+          allocation === undefined || snapshot === undefined ? undefined : { snapshot, allocation },
+        ),
+      );
+    },
+    readPlanSnapshot: (snapshotId) => Promise.resolve(ok(snapshots.get(snapshotId))),
+  };
+}
+
+/** Identifiers in order, so a test can name the record it expects. */
+function createSequentialIdGenerator(): IdGenerator {
+  let issued = 0;
+
+  return {
+    next: () => {
+      issued += 1;
+      return asEntityId(`record-${String(issued)}`);
+    },
+  };
+}
+
 let planStorage: EditablePaycheckPlanStorage;
+let confirmedPaychecks: ReturnType<typeof createMemoryConfirmedPaycheckStore>;
+let ids: IdGenerator;
 
 beforeEach(() => {
   planStorage = createMemoryPlanStorage();
+  confirmedPaychecks = createMemoryConfirmedPaycheckStore();
+  ids = createSequentialIdGenerator();
 });
 
-/** Renders the screen against the current storage stand-in. */
+/** Renders the screen against the current stand-ins. */
 function renderScreen(): void {
-  render(<PaycheckPreviewScreen planStorage={planStorage} />);
+  render(
+    <PaycheckPreviewScreen
+      planStorage={planStorage}
+      confirmedPaychecks={confirmedPaychecks}
+      ids={ids}
+    />,
+  );
+}
+
+/** Presses Confirm and lets the write settle. */
+async function confirmPaycheckOnScreen(): Promise<void> {
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm paycheck' }));
+  await screen.findByText('Paycheck confirmed and saved on this device.');
 }
 
 /*
@@ -182,10 +294,16 @@ describe('the paycheck preview screen', () => {
   });
 
   /*
-   * A preview proposes; it does not save. Plan settings are kept, but no button
-   * claims to commit an allocation, confirm a paycheck or move money.
+   * A preview proposes, and confirming records that proposal in PFOS. Neither
+   * moves money, and no button may suggest otherwise: Constitution Principle 8
+   * keeps physical money and virtual planning apart.
+   *
+   * This once asserted that no button mentioned confirming at all, which was
+   * true while confirming did not exist. Decision 098 and the confirmation
+   * slice make it a feature rather than a hazard, so what is checked now is the
+   * part that has not changed.
    */
-  it('offers nothing that claims to save or move money', () => {
+  it('offers nothing that claims to move money', () => {
     renderScreen();
     enterPaycheck('2000');
 
@@ -193,7 +311,7 @@ describe('the paycheck preview screen', () => {
 
     expect(labels).toContain('Preview');
     for (const label of labels) {
-      expect(label).not.toMatch(/save|confirm|commit|transfer|send/i);
+      expect(label).not.toMatch(/transfer|send money|pay |withdraw|deposit/i);
     }
 
     expect(screen.getByText(/Nothing is saved and no money moves/)).toBeInTheDocument();
@@ -579,6 +697,255 @@ describe('summarizing the whole plan', () => {
     enterPaycheck('2000');
 
     expect(screen.queryByText(SUMMARY)).not.toBeInTheDocument();
+  });
+});
+
+describe('confirming a paycheck', () => {
+  function press(name: string, nth = 0): void {
+    const button = screen.getAllByRole('button', { name })[nth];
+    if (button === undefined) {
+      throw new Error(`No button named ${name} at position ${String(nth)}.`);
+    }
+    fireEvent.click(button);
+  }
+
+  /** The plan the fidelity test uses: Emergency Fund $500, then Laptop $300. */
+  function twoPriorityPlan(): void {
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+  }
+
+  /** The allocation rows of one section, as [label, amount] pairs. */
+  function rowsUnder(heading: string): readonly (readonly string[])[] {
+    const section = screen.getByRole('region', { name: heading });
+
+    return [...section.querySelectorAll('tbody tr')].map((row) =>
+      [...row.querySelectorAll('th, td')].map((cell) => {
+        const label = cell.querySelector('.destination');
+        return (label ?? cell).textContent ?? '';
+      }),
+    );
+  }
+
+  it('offers no way to confirm before a preview exists', () => {
+    renderScreen();
+
+    expect(screen.queryByRole('button', { name: 'Confirm paycheck' })).not.toBeInTheDocument();
+  });
+
+  /* A preview is a proposal: looking at one must record nothing. */
+  it('records nothing when a paycheck is only previewed', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    expect(confirmedPaychecks.saved()).toBe(0);
+    expect(
+      screen.queryByRole('region', { name: 'Latest confirmed paycheck' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers to confirm once a preview is on screen', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('button', { name: 'Confirm paycheck' })).toBeInTheDocument();
+  });
+
+  it('records one confirmation when a person confirms', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    expect(confirmedPaychecks.saved()).toBe(1);
+  });
+
+  it('shows the saved paycheck after confirming', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    expect(rowsUnder('Latest confirmed paycheck')).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,300.00'],
+    ]);
+  });
+
+  it('keeps the reason under each saved line', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+
+    expect(
+      within(saved).getByText('Priority 1 · Requested $500.00 · Funded in full.'),
+    ).toBeInTheDocument();
+    expect(within(saved).getByText('10% of this paycheck.')).toBeInTheDocument();
+  });
+
+  it('shows the paycheck amount and date it was confirmed for', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+
+    expect(within(saved).getByText(/\$2,000\.00 on 2026-01-15/)).toBeInTheDocument();
+  });
+
+  it('shows the totals from the stored record', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+
+    expect(within(saved).getByText('Total allocated').closest('tr')).toHaveTextContent('$2,000.00');
+    expect(within(saved).getByText('Unallocated').closest('tr')).toHaveTextContent('$0.00');
+  });
+
+  /*
+   * The mandatory historical-fidelity case. A confirmed paycheck is recorded,
+   * the plan behind it is then changed beyond recognition, and the saved
+   * paycheck must still be the one that was confirmed.
+   */
+  it('leaves the confirmed paycheck alone when the plan changes afterwards', async () => {
+    renderScreen();
+    twoPriorityPlan();
+    enterPaycheck('2000');
+
+    expect(rowsUnder('Preview')).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Laptop', '$300.00'],
+      ['Spending', '$1,000.00'],
+    ]);
+
+    await confirmPaycheckOnScreen();
+
+    editPlan('Giving', '20');
+    editPlan('Priority 1 amount', '900');
+    editPlan('Priority 2 name', 'Camera');
+    press('Move up', 1);
+
+    expect(rowsUnder('Latest confirmed paycheck')).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Camera', '$300.00'],
+      ['Spending', '$1,000.00'],
+    ]);
+  });
+
+  /* The stored record survives the screen being thrown away and rebuilt. */
+  it('shows the confirmed paycheck again after a reload', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    cleanup();
+    renderScreen();
+
+    await screen.findByRole('region', { name: 'Latest confirmed paycheck' });
+
+    expect(rowsUnder('Latest confirmed paycheck')).toEqual([
+      ['Giving', '$200.00'],
+      ['Emergency Fund', '$500.00'],
+      ['Spending', '$1,300.00'],
+    ]);
+  });
+
+  /*
+   * A proposal may only be confirmed while it is still the one on screen.
+   * Changing the plan withdraws the offer until Preview is pressed again.
+   */
+  it('withdraws the offer to confirm when the plan changes', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    expect(screen.getByRole('button', { name: 'Confirm paycheck' })).toBeInTheDocument();
+
+    editPlan('Giving', '15');
+
+    expect(screen.queryByRole('button', { name: 'Confirm paycheck' })).not.toBeInTheDocument();
+    expect(
+      screen.getByText('The plan or paycheck changed. Preview again to confirm what you see now.'),
+    ).toBeInTheDocument();
+  });
+
+  it('withdraws the offer to confirm when the paycheck amount changes', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    fireEvent.change(screen.getByLabelText('Paycheck amount'), { target: { value: '2500' } });
+
+    expect(screen.queryByRole('button', { name: 'Confirm paycheck' })).not.toBeInTheDocument();
+  });
+
+  it('offers to confirm again once the preview is refreshed', () => {
+    renderScreen();
+    enterPaycheck('2000');
+    editPlan('Giving', '15');
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(screen.getByRole('button', { name: 'Confirm paycheck' })).toBeInTheDocument();
+  });
+
+  /* Ordinary double-click safety, not financial deduplication. */
+  it('disables the button while the confirmation is being written', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm paycheck' }));
+
+    expect(screen.getByRole('button', { name: 'Confirming…' })).toBeDisabled();
+  });
+
+  it('records one paycheck when the button is clicked twice', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    const button = screen.getByRole('button', { name: 'Confirm paycheck' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await screen.findByText('Paycheck confirmed and saved on this device.');
+
+    expect(confirmedPaychecks.saved()).toBe(1);
+  });
+
+  /* A failed write is reported, and nothing claims a paycheck was saved. */
+  it('says nothing was saved when the write fails', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    confirmedPaychecks.fail();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm paycheck' }));
+
+    await screen.findByRole('alert');
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'This paycheck was not saved. Nothing was recorded.',
+    );
+    expect(
+      screen.queryByText('Paycheck confirmed and saved on this device.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('region', { name: 'Latest confirmed paycheck' }),
+    ).not.toBeInTheDocument();
+  });
+
+  /* Constitution Principle 8: planning is not payment. */
+  it('never says that money moved', async () => {
+    renderScreen();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    expect(document.body.textContent).not.toMatch(
+      /transferred|funds moved|transaction complete|bank updated|payment sent/i,
+    );
+    expect(screen.getAllByText(/PFOS does not move money/).length).toBeGreaterThan(0);
   });
 });
 

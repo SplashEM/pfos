@@ -1,6 +1,8 @@
 import { useState, type JSX } from 'react';
 
+import { createCryptoIdGenerator } from '@infrastructure/ids/crypto-id-generator';
 import { createLocalStoragePaycheckPlanStorage } from '@infrastructure/paycheck/local-storage-paycheck-plan-storage';
+import { createIndexedDbConfirmedPaycheckStore } from '@infrastructure/persistence/indexed-db-confirmed-paycheck-store';
 import { PaycheckPreviewScreen } from '@presentation/paycheck/PaycheckPreviewScreen';
 
 /**
@@ -15,8 +17,16 @@ import { PaycheckPreviewScreen } from '@presentation/paycheck/PaycheckPreviewScr
  * place financial calculations in React components."
  */
 export function App(): JSX.Element {
-  /* Built once. A new instance on every render would restart the effect below it. */
+  /* Built once. A new instance on every render would restart the effects below. */
   const [planStorage] = useState(createLocalStoragePaycheckPlanStorage);
+  const [confirmedPaychecks] = useState(createIndexedDbConfirmedPaycheckStore);
+  const [ids] = useState(createCryptoIdGenerator);
 
-  return <PaycheckPreviewScreen planStorage={planStorage} />;
+  return (
+    <PaycheckPreviewScreen
+      planStorage={planStorage}
+      confirmedPaychecks={confirmedPaychecks}
+      ids={ids}
+    />
+  );
 }

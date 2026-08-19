@@ -11,11 +11,16 @@ import {
   renamePriority,
   setPriorityAmount,
 } from '@application/paycheck/edit-paycheck-plan';
-import type { EditablePaycheckPlan } from '@application/paycheck/paycheck-plan';
+import { confirmPaycheck } from '@application/paycheck/confirm-paycheck';
+import { toConfirmedPaycheckView } from '@application/paycheck/confirmed-paycheck-view';
+import { planLabels, type EditablePaycheckPlan } from '@application/paycheck/paycheck-plan';
+import type { ConfirmedPaycheckRecords } from '@application/persistence/confirmed-paycheck-records';
 import {
   previewPaycheckAllocation,
   type PaycheckPreview,
 } from '@application/paycheck/preview-paycheck-allocation';
+import type { ConfirmedPaycheckStore } from '@application/persistence/confirmed-paycheck-store';
+import type { IdGenerator } from '@domain/shared/ids/id-generator';
 
 import './paycheck-preview-screen.css';
 
@@ -52,9 +57,17 @@ import './paycheck-preview-screen.css';
  */
 export interface PaycheckPreviewScreenProps {
   readonly planStorage: EditablePaycheckPlanStorage;
+  /** Where confirmed paychecks are kept. Supplied by the composition root. */
+  readonly confirmedPaychecks: ConfirmedPaycheckStore;
+  /** Identifiers for the records a confirmation writes (PFOS-ENG-00 §4.5). */
+  readonly ids: IdGenerator;
 }
 
-export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProps): JSX.Element {
+export function PaycheckPreviewScreen({
+  planStorage,
+  confirmedPaychecks,
+  ids,
+}: PaycheckPreviewScreenProps): JSX.Element {
   const [amount, setAmount] = useState('2,000.00');
   const [eventDate, setEventDate] = useState(todayIso());
   /*
@@ -64,8 +77,31 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
   const [plan, setPlan] = useState<EditablePaycheckPlan>(() => planStorage.load());
   const [preview, setPreview] = useState<PaycheckPreview | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
+  /*
+   * What the preview on screen was built from.
+   *
+   * A proposal may only be confirmed while it still describes what a person is
+   * looking at. Comparing this with the current inputs is how the Confirm
+   * button disappears the moment the plan, the amount or the date changes: the
+   * preview is not silently recalculated, and a visibly stale proposal cannot
+   * be recorded. Pressing Preview again produces a fresh one.
+   */
+  const [previewedFrom, setPreviewedFrom] = useState<string | undefined>(undefined);
+  const [confirming, setConfirming] = useState(false);
+  /*
+   * The stored records, not a formatted view of them. Destination names come
+   * from the plan as it stands now, so a renamed bucket reads under its new
+   * name; the amounts and reasons beside it are the confirmed ones and are
+   * never recalculated (Decision 098 holding 4).
+   */
+  const [confirmed, setConfirmed] = useState<ConfirmedPaycheckRecords | undefined>(undefined);
+  const [justConfirmed, setJustConfirmed] = useState(false);
 
   const priorities = orderedPriorities(plan);
+  const confirmation =
+    confirmed === undefined ? undefined : toConfirmedPaycheckView(confirmed, planLabels(plan));
+  const currentInputs = JSON.stringify({ plan, amount, eventDate });
+  const confirmable = preview !== undefined && previewedFrom === currentInputs;
 
   /*
    * Settings are saved as they are edited, so there is no Save button and no
@@ -75,6 +111,25 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
   useEffect(() => {
     planStorage.save(plan);
   }, [planStorage, plan]);
+
+  /*
+   * The saved paycheck is read once, when the screen mounts, so a person coming
+   * back sees what they confirmed. It is read again after a confirmation, and
+   * at no other time: the stored record does not change on its own.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    void confirmedPaychecks.readLatestConfirmation().then((latest) => {
+      if (!cancelled && latest.ok) {
+        setConfirmed(latest.value);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [confirmedPaychecks]);
 
   function onPreview(submitEvent: FormEvent<HTMLFormElement>): void {
     submitEvent.preventDefault();
@@ -99,6 +154,72 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
 
     setError(undefined);
     setPreview(result.value);
+    setPreviewedFrom(currentInputs);
+    setJustConfirmed(false);
+  }
+
+  /**
+   * Records the proposal on screen.
+   *
+   * The preview's own `confirmable` payload is handed back untouched, so what
+   * is stored is the allocation a person was looking at rather than one
+   * recalculated at the moment of the click.
+   *
+   * The button is disabled while the write is in flight, which is ordinary
+   * double-click safety and nothing more: no request is deduplicated, no key is
+   * assigned, and pressing Confirm on a fresh preview later records a second
+   * paycheck as it should.
+   */
+  async function onConfirm(): Promise<void> {
+    if (preview === undefined || confirming) {
+      return;
+    }
+
+    setConfirming(true);
+
+    const result = await confirmPaycheck({
+      proposal: preview.confirmable,
+      confirmedAt: Date.now(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      ids,
+      store: confirmedPaychecks,
+    });
+
+    setConfirming(false);
+
+    if (!result.ok) {
+      setError(result.error.summary);
+      setJustConfirmed(false);
+      return;
+    }
+
+    setError(undefined);
+    setJustConfirmed(true);
+    await showLatestConfirmation();
+  }
+
+  /**
+   * Reloads the saved paycheck from storage.
+   *
+   * Reading it back rather than rendering what was just written keeps one path
+   * to the screen: what a person sees after confirming is the stored record,
+   * the same one they will see after a reload.
+   */
+  async function showLatestConfirmation(): Promise<void> {
+    const latest = await confirmedPaychecks.readLatestConfirmation();
+
+    if (latest.ok) {
+      setConfirmed(latest.value);
+      return;
+    }
+
+    /*
+     * A stored record that cannot be read is reported rather than hidden, and
+     * nothing is shown in its place. Decision 098 holding 8 leaves the stored
+     * data untouched, so nothing here retries, repairs or clears it.
+     */
+    setConfirmed(undefined);
+    setError(latest.error.summary);
   }
 
   return (
@@ -318,6 +439,86 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
           </table>
 
           <p className="note">A preview only. Nothing is saved and no money moves.</p>
+
+          {/*
+           * Confirming records this proposal in PFOS. It is offered only while
+           * the preview still matches what is on screen: change the plan, the
+           * amount or the date and it disappears until Preview is pressed
+           * again, so a proposal a person can no longer see cannot be saved.
+           */}
+          {confirmable && (
+            <div className="confirm">
+              <button type="button" onClick={() => void onConfirm()} disabled={confirming}>
+                {confirming ? 'Confirming…' : 'Confirm paycheck'}
+              </button>
+              <p className="note">
+                Confirming records this paycheck in PFOS. PFOS does not move money.
+              </p>
+            </div>
+          )}
+
+          {preview !== undefined && !confirmable && (
+            <p className="note">
+              The plan or paycheck changed. Preview again to confirm what you see now.
+            </p>
+          )}
+
+          {justConfirmed && (
+            <p className="confirmed" role="status">
+              Paycheck confirmed and saved on this device.
+            </p>
+          )}
+        </section>
+      )}
+
+      {confirmation !== undefined && (
+        <section aria-labelledby="confirmed-heading">
+          <h2 id="confirmed-heading">Latest confirmed paycheck</h2>
+
+          <p className="note">
+            {confirmation.paycheckAmount} on {confirmation.paycheckDate} · Confirmed{' '}
+            {confirmation.confirmedAt}
+          </p>
+
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Destination</th>
+                <th scope="col">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {confirmation.lines.map((line) => (
+                <tr key={line.bucketId}>
+                  <th scope="row">
+                    <span className="destination">{line.label}</span>
+                    <span className="why">{line.explanation}</span>
+                  </th>
+                  <td className="amount">{line.amount}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row">Total allocated</th>
+                <td className="amount">{confirmation.totalAllocated}</td>
+              </tr>
+              <tr>
+                <th scope="row">Unallocated</th>
+                <td className="amount">{confirmation.unallocated}</td>
+              </tr>
+            </tfoot>
+          </table>
+
+          {/*
+           * The plan may have changed since. This paycheck shows what was
+           * confirmed at the time and is not recalculated (Decision 098
+           * holding 4).
+           */}
+          <p className="note">
+            Saved on this device as it was confirmed. Changing your plan does not change it, and
+            PFOS does not move money.
+          </p>
         </section>
       )}
     </main>
