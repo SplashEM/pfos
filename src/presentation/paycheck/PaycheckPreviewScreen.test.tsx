@@ -507,6 +507,81 @@ describe('explaining the preview', () => {
   });
 });
 
+describe('summarizing the whole plan', () => {
+  function press(name: string, nth = 0): void {
+    const button = screen.getAllByRole('button', { name })[nth];
+    if (button === undefined) {
+      throw new Error(`No button named ${name} at position ${String(nth)}.`);
+    }
+    fireEvent.click(button);
+  }
+
+  /** The constrained plan again: Laptop $300 first, Emergency Fund $1,000 second. */
+  function constrainedPlan(): void {
+    fireEvent.change(screen.getByLabelText('Priority 1 amount'), { target: { value: '1000' } });
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    press('Move up', 1);
+  }
+
+  const SUMMARY =
+    'Not every top priority could be fully funded from this paycheck: they requested ' +
+    '$1,300.00 in total and received $1,080.00.';
+
+  it('says the plan did not fit before the rows that show it', () => {
+    renderScreen();
+    constrainedPlan();
+    enterPaycheck('1200');
+
+    expect(screen.getByText(SUMMARY)).toBeInTheDocument();
+  });
+
+  /* The summary is the plan-level view; the row still says why that row is short. */
+  it('keeps the per-line reason underneath it', () => {
+    renderScreen();
+    constrainedPlan();
+    enterPaycheck('1200');
+
+    expect(screen.getByText(SUMMARY)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Priority 2 · Requested $1,000.00 · Only $780.00 remained when this priority was reached.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /* Information, not a validation failure: it must not be announced as an alert. */
+  it('does not present the summary as an error', () => {
+    renderScreen();
+    constrainedPlan();
+    enterPaycheck('1200');
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows nothing when every priority was funded in full', () => {
+    renderScreen();
+    constrainedPlan();
+    enterPaycheck('2000');
+
+    expect(screen.queryByText(/could be fully funded/)).not.toBeInTheDocument();
+  });
+
+  /* A bigger paycheck removes the summary without the plan changing. */
+  it('drops the summary once the paycheck covers everything', () => {
+    renderScreen();
+    constrainedPlan();
+    enterPaycheck('1200');
+
+    expect(screen.getByText(SUMMARY)).toBeInTheDocument();
+
+    enterPaycheck('2000');
+
+    expect(screen.queryByText(SUMMARY)).not.toBeInTheDocument();
+  });
+});
+
 describe('remembering the plan', () => {
   /** Throws the screen away and builds a new one, as a reload would. */
   function reload(): void {

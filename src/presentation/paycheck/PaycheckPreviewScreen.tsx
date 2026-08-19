@@ -277,6 +277,16 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
         <section aria-labelledby="preview-heading">
           <h2 id="preview-heading">Preview</h2>
 
+          {/*
+           * The plan-level answer, above the rows it summarizes: whether the
+           * priorities as a group fit inside this paycheck. It is information
+           * rather than a validation failure, so it is neither an alert nor
+           * styled as an error, and it is absent when everything fit.
+           */}
+          {preview.priorityFundingSummary !== undefined && (
+            <p className="summary">{preview.priorityFundingSummary}</p>
+          )}
+
           <table>
             <thead>
               <tr>

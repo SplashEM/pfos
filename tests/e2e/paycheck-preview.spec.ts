@@ -188,6 +188,51 @@ test('a person can see why a priority was not fully funded', async ({ page }) =>
   );
 });
 
+/*
+ * Before reading any single line, a person should be able to see whether the
+ * plan as a whole fit inside the paycheck — and see that answer change when the
+ * paycheck does.
+ */
+test('a person can see whether the whole plan fit the paycheck', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByLabel('Priority 1 amount').fill('1000');
+  await page.getByRole('button', { name: 'Add priority' }).click();
+  await page.getByLabel('Priority 2 name').fill('Laptop');
+  await page.getByLabel('Priority 2 amount').fill('300');
+  await page.getByRole('button', { name: 'Move up' }).nth(1).click();
+
+  await page.getByLabel('Paycheck amount').fill('1200');
+  await page.getByLabel('Paycheck date').fill('2026-01-15');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  const summary = page.getByText('Not every top priority could be fully funded');
+
+  await expect(summary).toHaveText(
+    'Not every top priority could be fully funded from this paycheck: ' +
+      'they requested $1,300.00 in total and received $1,080.00.',
+  );
+
+  /* The plan-level line does not replace the per-line reason underneath it. */
+  await expect(
+    page.getByRole('table').getByRole('row').filter({ hasText: 'Emergency Fund' }),
+  ).toContainText(
+    'Priority 2 · Requested $1,000.00 · Only $780.00 remained when this priority was reached.',
+  );
+
+  /* It is information rather than a validation failure. */
+  await expect(page.getByRole('alert')).toHaveCount(0);
+
+  /* A paycheck that covers both requirements has nothing to summarize. */
+  await page.getByLabel('Paycheck amount').fill('2000');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  await expect(
+    page.getByRole('table').getByRole('row').filter({ hasText: 'Emergency Fund' }),
+  ).toContainText('$1,000.00');
+  await expect(summary).toHaveCount(0);
+});
+
 test('an unusable amount is explained rather than previewed', async ({ page }) => {
   await page.goto('/');
 

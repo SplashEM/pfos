@@ -218,6 +218,21 @@
   border-top: 2px solid #1a1c1f;
 }
 
+/*
+ * The plan-level summary, above the rows. Quieter than the error panel on
+ * purpose: a paycheck that could not cover every priority is something that
+ * happened, not something a person got wrong.
+ */
+.screen .summary {
+  margin: 0 0 0.875rem;
+  padding: 0.625rem 0.875rem;
+  font-size: 0.875rem;
+  color: #2b3038;
+  background: #f4f6f9;
+  border: 1px solid #e0e4ea;
+  border-radius: 0.375rem;
+}
+
 .screen .destination {
   display: block;
 }
