@@ -63,6 +63,22 @@ export interface ConfirmedPaycheckStore {
   ): Promise<Result<ConfirmedPaycheckRecords | undefined, DomainError>>;
 
   /**
+   * Reads every confirmed paycheck, newest first.
+   *
+   * "Newest" is the greatest `confirmedAt` with the record identifier breaking
+   * a tie, the same total order `readLatestConfirmation` answers with, so the
+   * head of this list and the latest confirmation cannot disagree.
+   *
+   * A stored record that cannot be read fails the whole list rather than being
+   * left out of it: a history missing a paycheck looks exactly like a history
+   * that never had one (Decision 098 holding 8).
+   *
+   * This is a screen's question, not a history API. There is no paging, no date
+   * range and no filter behind it.
+   */
+  readConfirmations(): Promise<Result<readonly ConfirmedPaycheckRecords[], DomainError>>;
+
+  /**
    * Reads the most recently confirmed paycheck, if there is one.
    *
    * "Most recent" is the greatest `confirmedAt`, with the record identifier
