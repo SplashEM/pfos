@@ -287,7 +287,10 @@ export function PaycheckPreviewScreen({ planStorage }: PaycheckPreviewScreenProp
             <tbody>
               {preview.lines.map((line) => (
                 <tr key={line.bucketId}>
-                  <th scope="row">{line.label}</th>
+                  <th scope="row">
+                    <span className="destination">{line.label}</span>
+                    <span className="why">{line.explanation}</span>
+                  </th>
                   <td className="amount">{line.amount}</td>
                 </tr>
               ))}

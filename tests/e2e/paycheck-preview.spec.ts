@@ -159,6 +159,35 @@ test('a person can add, fund and reorder top priorities', async ({ page }) => {
   await expect(page.getByLabel('Priority 1 amount')).toHaveValue('300');
 });
 
+/*
+ * Constitution Principle 9: an allocation must be explainable. This is the case
+ * where that matters most — a priority receives less than it asked for, and the
+ * screen has to say why rather than showing a smaller number in silence.
+ */
+test('a person can see why a priority was not fully funded', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByLabel('Priority 1 amount').fill('1000');
+  await page.getByRole('button', { name: 'Add priority' }).click();
+  await page.getByLabel('Priority 2 name').fill('Laptop');
+  await page.getByLabel('Priority 2 amount').fill('300');
+  await page.getByRole('button', { name: 'Move up' }).nth(1).click();
+
+  await page.getByLabel('Paycheck amount').fill('1200');
+  await page.getByLabel('Paycheck date').fill('2026-01-15');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  const rows = page.getByRole('table').getByRole('row');
+
+  await expect(rows.filter({ hasText: 'Giving' })).toContainText('10% of this paycheck.');
+  await expect(rows.filter({ hasText: 'Laptop' })).toContainText(
+    'Priority 1 · Requested $300.00 · Funded in full.',
+  );
+  await expect(rows.filter({ hasText: 'Emergency Fund' })).toContainText(
+    'Priority 2 · Requested $1,000.00 · Only $780.00 remained when this priority was reached.',
+  );
+});
+
 test('an unusable amount is explained rather than previewed', async ({ page }) => {
   await page.goto('/');
 

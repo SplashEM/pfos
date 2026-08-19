@@ -58,14 +58,30 @@ function editPlan(label: string, value: string): void {
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
 }
 
-/** The rendered rows as [label, amount] pairs, in display order. */
+/**
+ * The rendered rows as [label, amount] pairs, in display order.
+ *
+ * A row header carries the destination name and, under it, the reason the line
+ * received what it did. Only the name is read here; the explanations have their
+ * own tests, and folding them into every row assertion would make each one
+ * restate text it is not about.
+ */
 function renderedRows(): readonly (readonly string[])[] {
   return screen.getAllByRole('row').flatMap((row) => {
     const scope = within(row);
     const cells = [...scope.queryAllByRole('rowheader'), ...scope.queryAllByRole('cell')];
 
     /* The heading row carries column headers rather than a label and an amount. */
-    return cells.length === 2 ? [cells.map((cell) => cell.textContent ?? '')] : [];
+    if (cells.length !== 2) {
+      return [];
+    }
+
+    return [
+      cells.map((cell) => {
+        const label = cell.querySelector('.destination');
+        return (label ?? cell).textContent ?? '';
+      }),
+    ];
   });
 }
 
@@ -419,6 +435,75 @@ describe('managing top priorities', () => {
       ['Total allocated', '$2,000.00'],
       ['Unallocated', '$0.00'],
     ]);
+  });
+});
+
+describe('explaining the preview', () => {
+  function press(name: string, nth = 0): void {
+    const button = screen.getAllByRole('button', { name })[nth];
+    if (button === undefined) {
+      throw new Error(`No button named ${name} at position ${String(nth)}.`);
+    }
+    fireEvent.click(button);
+  }
+
+  /** Builds the constrained plan: Laptop $300 first, Emergency Fund $1,000 second. */
+  function constrainedPlan(): void {
+    fireEvent.change(screen.getByLabelText('Priority 1 amount'), { target: { value: '1000' } });
+    press('Add priority');
+    fireEvent.change(screen.getByLabelText('Priority 2 name'), { target: { value: 'Laptop' } });
+    fireEvent.change(screen.getByLabelText('Priority 2 amount'), { target: { value: '300' } });
+    press('Move up', 1);
+  }
+
+  it('says why the obligation took what it did', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    expect(screen.getByText('10% of this paycheck.')).toBeInTheDocument();
+  });
+
+  it('says a priority was funded in full', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    expect(
+      screen.getByText('Priority 1 · Requested $500.00 · Funded in full.'),
+    ).toBeInTheDocument();
+  });
+
+  it('says why a priority received less than it asked for', () => {
+    renderScreen();
+    constrainedPlan();
+    enterPaycheck('1200');
+
+    expect(
+      screen.getByText(
+        'Priority 2 · Requested $1,000.00 · Only $780.00 remained when this priority was reached.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  /* The explanation shown must match the amount beside it, whatever the order. */
+  it('moves the explanation with the order', () => {
+    renderScreen();
+    constrainedPlan();
+    press('Move up', 1);
+    enterPaycheck('1200');
+
+    expect(renderedRows()).toContainEqual(['Emergency Fund', '$1,000.00']);
+    expect(
+      screen.getByText('Priority 1 · Requested $1,000.00 · Funded in full.'),
+    ).toBeInTheDocument();
+  });
+
+  it('explains the leftover destination', () => {
+    renderScreen();
+    enterPaycheck('2000');
+
+    expect(
+      screen.getByText('Receives whatever remains after everything above.'),
+    ).toBeInTheDocument();
   });
 });
 
