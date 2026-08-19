@@ -9049,6 +9049,132 @@ Reconsider when a second event type, a correction or a reversal changes either e
 
 ---
 
+# Decision 099: Historical Destination Labels in Confirmed Allocations
+
+**Status:** Accepted
+**Related:** Decisions 074, 086, 093, 097, 098
+**Scope:** Data, Engineering
+
+## Decision
+
+### 1. A confirmed component records the name it was confirmed under
+
+`AllocationComponentRecord` gains one member, `destinationLabel`: the
+human-readable destination name shown to the person for that line at the moment
+they confirmed the paycheck.
+
+### 2. It is presentation and audit context, and nothing else
+
+`destinationLabel` takes no part in rule resolution, allocation, ordering,
+identity, ownership or any financial calculation. No engine reads it, and
+PFOS-ENG-01 §26 continues to keep resolution independent of display names.
+
+### 3. `destinationBucketId` remains the identity
+
+The identifier still says which bucket received the money. Renaming a bucket
+later changes nothing about a stored label: a confirmed record is immutable, and
+the label is the one that was on screen at confirmation, not the current one.
+
+### 4. `Allocation.schemaVersion` becomes 2
+
+Decision 097 recorded that where "no member is added, removed or made optional…
+no incompatible persisted change arises and Decision 074's versioning rule is not
+triggered". A member is added here, so the rule is triggered and the version
+increments from 1 to 2. Decision 098 holding 3 keeps that number the version of
+the Allocation envelope alone.
+
+`destinationLabel` is required at version 2 rather than optional. Under the
+repository's `exactOptionalPropertyTypes` an optional member can only be omitted,
+so a truncated record and a deliberate one would be byte-identical — the
+objection Decision 093 raised against absence carrying meaning, and Decision 086
+against discriminating on which key is present.
+
+`PlanSnapshot.schemaVersion` remains 1. `ResolvedRuleSet.schemaVersion` remains
+3. Decision 098 holdings 2 and 3 keep all three independent.
+
+### 5. Version 1 records are read, and left exactly as they are
+
+A stored allocation declaring version 1 is read as the shape Decision 098 fixed:
+no `destinationLabel`, everything else identical. It renders with
+`destinationBucketId` in place of a name, which is what those records honestly
+contain.
+
+This is a reader for one immediately preceding format, not a migration
+framework. No general compatibility mechanism, no read-migration and no
+migration engine is created or authorised, and Decision 098's deferral of that
+architecture stands for every other case.
+
+Version 2 is written for every new confirmation.
+
+### 6. Nothing stored is changed
+
+No version 1 record is rewritten, upgraded on read, re-saved or deleted. Reading
+one writes nothing, in keeping with PFOS-ENG-00 §26 and Decision 098 holding 8.
+
+### 7. The database is untouched
+
+The IndexedDB database stays at version 1 with its two object stores and no
+indexes. The application-level schema version of a value stored inside the
+allocations store is a different version class from the database's own
+(PFOS-ENG-00 §40), and changing it requires no database migration.
+
+## Why
+
+A person reading their own history saw `bucket-priority-2 $300.00` where the
+preview had said `Laptop $300.00`. The record was correct and the display was
+honest, but a stored paycheck a person cannot read is a stored paycheck they
+cannot check, which defeats what confirming is for.
+
+Reading the name from the current plan was tried and removed: renaming a
+priority made a paycheck confirmed against Laptop read as Vacation, with the
+record untouched and the screen saying something else. The only source that
+cannot drift is the record itself, so the name is stored with it.
+
+## Alternatives Considered
+
+Deriving a name from the identifier was rejected. PFOS-ENG-00 §14 forbids
+deriving meaning from an identifier, and the derivation breaks the moment a
+bucket identifier is a UUID.
+
+Reading the label from the current plan was rejected on the evidence above: it
+lets a later rename rewrite what a person confirmed.
+
+Keeping the identifier display was rejected as the V1 answer. It is honest but
+unreadable, and readability is the whole purpose of the record's presentation.
+
+An optional member without a version increment was rejected. Decision 097 states
+the rule that adding a member triggers Decision 074's, and an optional member
+would make a truncated record indistinguishable from a complete one.
+
+A migration that rewrote version 1 records was rejected. Nothing needs
+rewriting, and rewriting stored financial data to gain a display name would risk
+history for cosmetics.
+
+## Consequences
+
+New confirmations carry the name a person saw. Records confirmed before this
+change keep showing identifiers, permanently, which is what they contain.
+
+A second persisted format now exists for one contract, and one reader
+understands both. That reader is bounded to these two versions by holding 5.
+
+## Deliberately unresolved
+
+General forward and backward compatibility, read-migration and migration
+architecture. Corrections, reversal and deletion. Label uniqueness, blankness or
+length. Whether a future Bucket entity supplies names to history. Every other
+Decision 098 deferral.
+
+## Future Review Trigger
+
+Reconsider when a Bucket entity with its own persisted name exists, since a
+stored label and a stored entity name would then both describe a destination;
+when a third Allocation envelope version is needed, since holding 5's two-format
+reader is not a general mechanism; or if corrections or reversal introduce
+records that must restate a historical label.
+
+---
+
 # 3. Deferred Decisions
 
 The following topics are intentionally postponed until later specifications or versions:
