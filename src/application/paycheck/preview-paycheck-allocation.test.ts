@@ -302,6 +302,98 @@ describe('managing more than one priority', () => {
   });
 });
 
+describe('explaining why each line got its amount', () => {
+  /** The preview as [label, amount, explanation] triples. */
+  function explained(plan: EditablePaycheckPlan, amount: string): readonly (readonly string[])[] {
+    return preview(request({ plan, amount })).lines.map((line) => [
+      line.label,
+      line.amount,
+      line.explanation,
+    ]);
+  }
+
+  const laptop = (amountPerPaycheck: string, rank: number): EditablePriority =>
+    priority('bucket-laptop', 'Laptop', amountPerPaycheck, rank);
+
+  const emergencyFundAt = (amountPerPaycheck: string, rank: number): EditablePriority =>
+    priority('bucket-emergency-fund', 'Emergency Fund', amountPerPaycheck, rank);
+
+  /*
+   * The scenario that makes explanation worth having: $1,200 cannot cover both
+   * requirements, so one priority is funded in full and the next one is not.
+   */
+  const CONSTRAINED = planWithPriorities(laptop('300', 1), emergencyFundAt('1000', 2));
+
+  it('explains the obligation with the rate that produced it', () => {
+    expect(explained(CONSTRAINED, '1200')[0]).toEqual([
+      'Giving',
+      '$120.00',
+      '10% of this paycheck.',
+    ]);
+  });
+
+  it('explains a priority that was funded in full', () => {
+    expect(explained(CONSTRAINED, '1200')[1]).toEqual([
+      'Laptop',
+      '$300.00',
+      'Priority 1 · Requested $300.00 · Funded in full.',
+    ]);
+  });
+
+  it('explains a priority the pool could not cover', () => {
+    expect(explained(CONSTRAINED, '1200')[2]).toEqual([
+      'Emergency Fund',
+      '$780.00',
+      'Priority 2 · Requested $1,000.00 · Only $780.00 remained when this priority was reached.',
+    ]);
+  });
+
+  /* The explanation follows the ranks, not the labels. */
+  it('follows the order when the ranks are reversed', () => {
+    const reversed = planWithPriorities(emergencyFundAt('1000', 1), laptop('300', 2));
+
+    expect(explained(reversed, '1200')).toEqual([
+      ['Giving', '$120.00', '10% of this paycheck.'],
+      ['Emergency Fund', '$1,000.00', 'Priority 1 · Requested $1,000.00 · Funded in full.'],
+      [
+        'Laptop',
+        '$80.00',
+        'Priority 2 · Requested $300.00 · Only $80.00 remained when this priority was reached.',
+      ],
+    ]);
+  });
+
+  it('explains the leftover destination', () => {
+    const lines = preview(request({ amount: '2000' })).lines;
+
+    expect(lines[lines.length - 1]).toEqual({
+      bucketId: 'bucket-leftover',
+      label: 'Spending',
+      amount: '$1,300.00',
+      explanation: 'Receives whatever remains after everything above.',
+    });
+  });
+
+  it('reads a fractional rate without trailing zeros', () => {
+    expect(explained(planWith({ givingPercent: '12.5' }), '2000')[0]?.[2]).toBe(
+      '12.5% of this paycheck.',
+    );
+  });
+
+  /* No sentence may promise a later paycheck, a debt or a recommendation. */
+  it('never claims anything beyond the allocation it describes', () => {
+    for (const line of preview(request({ plan: CONSTRAINED, amount: '1200' })).lines) {
+      expect(line.explanation).not.toMatch(/owe|debt|next time|carry|should|recommend|will be/i);
+    }
+  });
+
+  it('explains every line it returns', () => {
+    for (const line of preview(request({ amount: '2000' })).lines) {
+      expect(line.explanation.length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe('plan values a person can correct', () => {
   it('rejects a percentage that is not a number', () => {
     expect(rejected(request({ plan: planWith({ givingPercent: 'ten' }) })).code).toBe(

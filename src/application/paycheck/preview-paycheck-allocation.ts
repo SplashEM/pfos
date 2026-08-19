@@ -1,3 +1,5 @@
+import type { AllocationExplanation } from '@domain/allocation/contracts/allocation-explanation';
+import { ALLOCATION_EXPLANATION_CODES } from '@domain/allocation/contracts/allocation-explanation';
 import type { AllocationIncomeEvent } from '@domain/allocation/contracts/allocation-income-event';
 import { executeAllocation } from '@domain/allocation/services/execute-allocation';
 import { resolveRuleSet } from '@domain/rules/services/resolve-rule-set';
@@ -8,6 +10,7 @@ import { ERROR_CATEGORIES } from '@domain/shared/errors/error-category';
 import { err, ok, type Result } from '@domain/shared/errors/result';
 import { asEntityId, type EntityId } from '@domain/shared/ids/entity-id';
 import { formatUsd } from '@domain/shared/money/money-format';
+import type { Money } from '@domain/shared/money/money';
 import { parseUsd } from '@domain/shared/money/money-parse';
 
 import { APPLICATION_ERROR_CODES } from '../errors/application-error-codes';
@@ -43,6 +46,8 @@ export interface PaycheckPreviewLine {
   readonly bucketId: string;
   readonly label: string;
   readonly amount: string;
+  /** Why this line received this amount, in words a screen can show as-is. */
+  readonly explanation: string;
 }
 
 /** The answer to "where should this paycheck go?", formatted for display. */
@@ -119,6 +124,7 @@ export function previewPaycheckAllocation(
       bucketId: line.bucketId,
       label: labelFor(authored.value, line.bucketId),
       amount: formatUsd(line.amount),
+      explanation: explain(line.explanation, line.amount),
     })),
     totalAllocated: formatUsd(allocation.value.totalAllocated),
     unallocated: formatUsd(allocation.value.unallocated),
@@ -180,6 +186,66 @@ function buildIncomeEvent(
  */
 function labelFor(authored: AuthoredPaycheckPlan, bucketId: EntityId): string {
   return authored.labels[bucketId] ?? bucketId;
+}
+
+/**
+ * Turns the engine's structured explanation facts into a sentence.
+ *
+ * PFOS-ENG-02 §52 keeps explanations as structured facts and records that "the
+ * presentation layer may convert these facts into natural-language text". This
+ * is that conversion, done once here rather than in a component, so a screen
+ * never reconstructs financial reasoning and every surface says the same thing.
+ *
+ * Nothing is recomputed. Every figure below is either a value the engine
+ * carried on the explanation or the amount already on the line, so the words
+ * cannot drift from the arithmetic they describe.
+ *
+ * Nothing is promised, either. No sentence says what a later paycheck will do,
+ * what is still owed, or what a person should change: the shortfall, advisor and
+ * coaching behaviours those would imply do not exist.
+ */
+function explain(explanation: AllocationExplanation, allocated: Money): string {
+  switch (explanation.code) {
+    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_OBLIGATION_RATE:
+      return `${formatPercent(explanation.rateBasisPoints)} of this paycheck.`;
+
+    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_FUNDED_IN_FULL:
+      return (
+        `Priority ${String(explanation.rank)} · ` +
+        `Requested ${formatUsd(explanation.requestedAmount)} · Funded in full.`
+      );
+
+    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_POOL_EXHAUSTED:
+      return (
+        `Priority ${String(explanation.rank)} · ` +
+        `Requested ${formatUsd(explanation.requestedAmount)} · ` +
+        `Only ${formatUsd(allocated)} remained when this priority was reached.`
+      );
+
+    case ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_LEFTOVER_REMAINDER:
+      return 'Receives whatever remains after everything above.';
+  }
+}
+
+/**
+ * A rate as a percentage, for reading.
+ *
+ * The arithmetic is on integers: basis points split into whole percent and
+ * hundredths, so no binary fraction reaches the text. Trailing zeros are
+ * dropped, which is why 1,000 basis points reads as 10% rather than 10.00%.
+ */
+function formatPercent(rateBasisPoints: number): string {
+  const whole = Math.trunc(rateBasisPoints / 100);
+  const hundredths = rateBasisPoints % 100;
+
+  if (hundredths === 0) {
+    return `${String(whole)}%`;
+  }
+
+  const padded = String(hundredths).padStart(2, '0');
+  const trimmed = padded.endsWith('0') ? padded.slice(0, 1) : padded;
+
+  return `${String(whole)}.${trimmed}%`;
 }
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;

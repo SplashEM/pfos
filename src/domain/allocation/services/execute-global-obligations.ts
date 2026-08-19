@@ -6,6 +6,7 @@ import type { Money } from '@domain/shared/money/money';
 import { allocateObligation } from '@domain/shared/money/single-obligation';
 
 import type { AllocationIncomeEvent } from '../contracts/allocation-income-event';
+import { ALLOCATION_EXPLANATION_CODES } from '../contracts/allocation-explanation';
 import type { AllocationLine } from '../contracts/allocation-result';
 
 /** What a stage produced, and what is left of the pool afterwards. */
@@ -68,6 +69,10 @@ export function executeGlobalObligations(
       bucketId: obligation.destinationBucketId,
       stage: 'GLOBAL_OBLIGATION',
       amount: amount.value,
+      explanation: {
+        code: ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_OBLIGATION_RATE,
+        rateBasisPoints: obligation.rateBasisPoints,
+      },
     });
     pool = reduced.value;
   }

@@ -62,7 +62,15 @@ describe('executeGlobalObligations', () => {
     }
 
     expect(result.value.lines).toEqual([
-      { bucketId: GIVING, stage: 'GLOBAL_OBLIGATION', amount: money(20_000) },
+      {
+        bucketId: GIVING,
+        stage: 'GLOBAL_OBLIGATION',
+        amount: money(20_000),
+        explanation: {
+          code: 'ALLOCATION_EXPLAIN_OBLIGATION_RATE',
+          rateBasisPoints: 1_000,
+        },
+      },
     ]);
     expect(result.value.remainingPool).toEqual(money(180_000));
   });

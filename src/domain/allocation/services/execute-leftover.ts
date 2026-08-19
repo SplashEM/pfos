@@ -5,6 +5,7 @@ import { err, ok, type Result } from '@domain/shared/errors/result';
 import { zero } from '@domain/shared/money/money';
 import type { Money } from '@domain/shared/money/money';
 
+import { ALLOCATION_EXPLANATION_CODES } from '../contracts/allocation-explanation';
 import type { AllocationLine } from '../contracts/allocation-result';
 import { ALLOCATION_ERROR_CODES } from '../errors/allocation-error-codes';
 import { allocationError } from '../errors/allocation-error';
@@ -59,6 +60,9 @@ export function executeLeftover(
       bucketId: policy.destinationBucketId,
       stage: 'LEFTOVER_POLICY',
       amount: remainingPool,
+      explanation: {
+        code: ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_LEFTOVER_REMAINDER,
+      },
     },
   ];
 

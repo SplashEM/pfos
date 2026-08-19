@@ -23,7 +23,12 @@ describe('executeLeftover', () => {
     }
 
     expect(result.value.lines).toEqual([
-      { bucketId: SPENDING, stage: 'LEFTOVER_POLICY', amount: money(130_000) },
+      {
+        bucketId: SPENDING,
+        stage: 'LEFTOVER_POLICY',
+        amount: money(130_000),
+        explanation: { code: 'ALLOCATION_EXPLAIN_LEFTOVER_REMAINDER' },
+      },
     ]);
     expect(result.value.remainingPool).toEqual(money(0));
   });

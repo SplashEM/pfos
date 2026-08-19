@@ -48,9 +48,48 @@ describe('executeTopPriority', () => {
     }
 
     expect(result.value.lines).toEqual([
-      { bucketId: EMERGENCY_FUND, stage: 'TOP_PRIORITY', amount: money(50_000) },
+      {
+        bucketId: EMERGENCY_FUND,
+        stage: 'TOP_PRIORITY',
+        amount: money(50_000),
+        explanation: {
+          code: 'ALLOCATION_EXPLAIN_PRIORITY_FUNDED_IN_FULL',
+          rank: 1,
+          requestedAmount: money(50_000),
+        },
+      },
     ]);
     expect(result.value.remainingPool).toEqual(money(130_000));
+  });
+
+  /*
+   * The explanation must agree with the arithmetic beside it. A priority that
+   * could not be covered says so, and carries the rank that decided when it was
+   * reached together with what it asked for — the facts PFOS-ENG-02 §52 names.
+   */
+  it('explains a priority the pool could not cover', () => {
+    const result = executeTopPriority(
+      sequential([{ bucketId: 'bucket-emergency-fund', rank: 1 }]),
+      [fixedFunding('bucket-emergency-fund', 50_000)],
+      money(30_000),
+    );
+
+    if (!result.ok) {
+      throw new Error(`Unexpected failure: ${result.error.code}`);
+    }
+
+    expect(result.value.lines).toEqual([
+      {
+        bucketId: EMERGENCY_FUND,
+        stage: 'TOP_PRIORITY',
+        amount: money(30_000),
+        explanation: {
+          code: 'ALLOCATION_EXPLAIN_PRIORITY_POOL_EXHAUSTED',
+          rank: 1,
+          requestedAmount: money(50_000),
+        },
+      },
+    ]);
   });
 
   /* §17: allocate as much as needed or available, then stop. */

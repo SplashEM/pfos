@@ -3,9 +3,10 @@ import type { ResolvedTopPriorityPlan } from '@domain/rules/contracts/resolved-t
 import { ERROR_CATEGORIES } from '@domain/shared/errors/error-category';
 import type { DomainError } from '@domain/shared/errors/domain-error';
 import { err, ok, type Result } from '@domain/shared/errors/result';
-import { min, subtract } from '@domain/shared/money/money-arithmetic';
+import { compare, min, subtract } from '@domain/shared/money/money-arithmetic';
 import type { Money } from '@domain/shared/money/money';
 
+import { ALLOCATION_EXPLANATION_CODES } from '../contracts/allocation-explanation';
 import type { AllocationLine } from '../contracts/allocation-result';
 import { ALLOCATION_ERROR_CODES } from '../errors/allocation-error-codes';
 import { allocationError } from '../errors/allocation-error';
@@ -84,10 +85,28 @@ export function executeTopPriority(
       return reduced;
     }
 
+    /*
+     * Whether the pool covered the request is already decided by the `min`
+     * above; this reads that outcome rather than recomputing it, so the
+     * explanation cannot disagree with the amount beside it.
+     */
+    const covered = compare(allocated.value, requirement.value);
+    if (!covered.ok) {
+      return covered;
+    }
+
     lines.push({
       bucketId: entry.bucketId,
       stage: 'TOP_PRIORITY',
       amount: allocated.value,
+      explanation: {
+        code:
+          covered.value === 0
+            ? ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_FUNDED_IN_FULL
+            : ALLOCATION_EXPLANATION_CODES.ALLOCATION_EXPLAIN_PRIORITY_POOL_EXHAUSTED,
+        rank: entry.rank,
+        requestedAmount: requirement.value,
+      },
     });
     pool = reduced.value;
   }

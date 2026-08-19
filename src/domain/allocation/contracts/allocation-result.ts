@@ -2,6 +2,8 @@ import type { AllocationStage } from '@domain/rules/contracts/allocation-stage';
 import type { EntityId } from '@domain/shared/ids/entity-id';
 import type { Money } from '@domain/shared/money/money';
 
+import type { AllocationExplanation } from './allocation-explanation';
+
 /**
  * One proposed movement of money into one bucket (PFOS-ENG-02 §11).
  *
@@ -15,6 +17,12 @@ import type { Money } from '@domain/shared/money/money';
  * the Allocation Engine consumes it, so there is one stage vocabulary in the
  * system rather than two that can drift.
  *
+ * `explanation` carries the structured facts behind the amount (PFOS-ENG-02
+ * §52). Constitution Principle 9 asks that an allocation be explainable, and a
+ * line that says only "$780" is not: the reason belongs beside the number
+ * rather than being reconstructed by whoever displays it. It is required, so no
+ * stage can emit money without saying why.
+ *
  * A line is a proposal, not a posted transaction. Nothing here confirms,
  * persists or moves physical money; Constitution Principle 8 keeps physical
  * money and virtual planning separate, and this contract lives entirely on the
@@ -24,6 +32,7 @@ export interface AllocationLine {
   readonly bucketId: EntityId;
   readonly stage: AllocationStage;
   readonly amount: Money;
+  readonly explanation: AllocationExplanation;
 }
 
 /**
@@ -42,13 +51,17 @@ export interface AllocationLine {
  * caller check conservation without re-deriving it. Storing only one would make
  * the invariant unverifiable from the result alone.
  *
- * This is the minimum shape the first executable slice needs. §46 and the
- * neighbouring sections describe more that a full preview eventually carries —
- * run states (§8), shortfall and unmet amounts (§41), skipped allocations
- * (§50), the invariant report (§47) and per-line explanations. None is included
- * here: the first slice is fully funded, so no shortfall exists to report, and
- * publishing empty shapes for behaviour nothing yet produces would fix contracts
- * ahead of the code that gives them meaning.
+ * This is the minimum shape the current slices need. §46 and the neighbouring
+ * sections describe more that a full preview eventually carries — run states
+ * (§8), shortfall and unmet amounts (§41), skipped allocations (§50) and the
+ * invariant report (§47). None is included here: publishing empty shapes for
+ * behaviour nothing yet produces would fix contracts ahead of the code that
+ * gives them meaning.
+ *
+ * Per-line explanations were on that list until a plan could hold two
+ * priorities competing for one paycheck. A person can now see a number smaller
+ * than what was asked for, so the reason arrived with the behaviour that made
+ * it necessary, on `AllocationLine.explanation`.
  */
 export interface AllocationResult {
   readonly incomeEventId: EntityId;
