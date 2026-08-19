@@ -6,9 +6,10 @@ const BASE_URL = `http://localhost:${PORT}`;
 /**
  * End-to-end tests (PFOS-ENG-00 §31.5).
  *
- * §31.5 states that end-to-end tests cover the five core product questions.
- * None of those flows exist yet; Milestone 0 ships only a shell smoke test
- * proving the harness is wired.
+ * §31.5 states that end-to-end tests cover the five core product questions. The
+ * specs here drive the first of them in a real browser: building a plan,
+ * previewing a paycheck, confirming it, and reading the confirmed history back
+ * after a reload.
  */
 export default defineConfig({
   testDir: './tests/e2e',

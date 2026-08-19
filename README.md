@@ -15,22 +15,43 @@ reporting where it already went. Version 1 exists to answer five questions well:
 
 ---
 
-## Project status
+## What PFOS does today
 
-**Milestone 0 — Repository Foundation.**
+PFOS answers the first of its five questions end to end, locally, on your own
+device:
 
-This repository currently contains the toolchain, the architectural layer
-boundaries, and an application shell that exists only to prove the project
-builds, renders, and tests. **No financial functionality is implemented.**
+- **Build a plan.** Set a giving percentage, rank up to three top priorities
+  with a fixed amount each, and name where everything left over goes.
+- **Keep it.** Plan settings are saved on this device and survive a reload.
+- **Preview a paycheck.** Enter an amount and a date and see exactly where that
+  money would go, resolved by the Rule Engine and allocated by the Allocation
+  Engine.
+- **Understand every line.** Each destination says why it received what it did —
+  the rate that applied, the priority rank and what it asked for, or that it
+  takes the remainder.
+- **See whether the plan fit.** When a paycheck cannot fully fund every
+  priority, the preview says so before you read a single row.
+- **Confirm it.** Confirming records the paycheck and the plan that produced it
+  as an immutable local record.
+- **Keep your history.** Every confirmed paycheck stays readable, newest first,
+  showing the amounts, reasons and destination names it was confirmed with —
+  unchanged by any later edit to your plan.
 
-There is no money handling, no rule resolution, no allocation, no persistence,
-and no product behavior of any kind yet.
+**PFOS never moves money.** It is a planning system: confirming records what you
+decided, and no transfer, payment or bank interaction happens or is possible.
 
-Milestones are defined in `docs/engineering/00_Core_Architecture.md` §48 and run
-M0 → M1 → M2 in order as separate reviewable units (Decision 069).
+Confirmed paychecks cannot yet be corrected, reversed or deleted.
 
-> **M1 is currently blocked.** The financial rounding policy must be resolved
-> before Financial Primitives begin. See Decision 070 in `docs/02_Decision_Log.md`.
+Everything is local. There is no account, no server and no synchronisation.
+
+### Not in this version
+
+Goal tracking, recurring bills, lower-priority pools, simulations, coaching,
+corrections, export and backup, bank connections, and multi-currency. The
+architecture leaves room for them; none is partially implemented.
+
+Milestones are defined in `docs/engineering/00_Core_Architecture.md` §48 and are
+taken in order as separate reviewable units (Decision 069).
 
 ---
 
@@ -91,11 +112,11 @@ Presentation  →  Application / Orchestration  →  Domain Engines
 | `src/application/` | Application | Commands, queries, workflow orchestration. No React, no infrastructure. |
 | `src/domain/` | Domain | Pure deterministic financial logic. No React, no browser APIs, no clock, no randomness. |
 | `src/infrastructure/` | Infrastructure | IndexedDB, CSV, backups. Implements inner-layer interfaces. |
-| `src/test/` | Test support | Shared setup. Fixtures and builders arrive with the code they cover. |
+| `src/test/` | Test support | Shared setup, fixtures, architecture guards, and integration tests that cross layers. |
 | `tests/e2e/` | End-to-end | Playwright specs. |
 
-Layer directories currently hold only a `.gitkeep`. Subdirectories are created by
-the milestone that fills them, rather than pre-built empty.
+Subdirectories are created by the milestone that fills them, rather than
+pre-built empty.
 
 These boundaries are enforced by ESLint (`eslint.config.js`), not by convention
 alone. The domain layer additionally rejects `new Date()`, `Date.now()`,

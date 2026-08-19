@@ -473,7 +473,8 @@ export function PaycheckPreviewScreen({
                 {confirming ? 'Confirming…' : 'Confirm paycheck'}
               </button>
               <p className="note">
-                Confirming records this paycheck in PFOS. PFOS does not move money.
+                Confirming records this paycheck in PFOS. PFOS does not move money, and a confirmed
+                paycheck cannot yet be changed or removed.
               </p>
             </div>
           )}
