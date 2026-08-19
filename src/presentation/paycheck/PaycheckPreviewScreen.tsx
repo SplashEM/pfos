@@ -1,6 +1,9 @@
-import { useState, type FormEvent, type JSX } from 'react';
+import { useEffect, useState, type FormEvent, type JSX } from 'react';
 
-import { DEFAULT_PAYCHECK_PLAN } from '@application/paycheck/paycheck-plan';
+import {
+  loadEditablePaycheckPlan,
+  saveEditablePaycheckPlan,
+} from '@application/paycheck/paycheck-plan-storage';
 import {
   previewPaycheckAllocation,
   type PaycheckPreview,
@@ -26,21 +29,39 @@ import './paycheck-preview-screen.css';
  * forbids a deterministic engine function from reading one. The moment and the
  * viewer's time zone are passed inward as ordinary arguments.
  *
- * A preview is a proposal. Nothing is confirmed, saved or moved: Constitution
- * Principle 8 keeps physical money and virtual planning apart, and this screen
- * lives entirely on the planning side. There is deliberately no Save button,
- * because there is nothing yet that saving would mean.
+ * A preview is a proposal. No allocation is confirmed and no money moves:
+ * Constitution Principle 8 keeps physical money and virtual planning apart, and
+ * this screen lives entirely on the planning side.
+ *
+ * The three plan settings are remembered on the device, and nothing else is.
+ * They save themselves as they are edited, so there is no Save button — a
+ * button would imply a person is committing something, and the only thing kept
+ * is the text they typed into three fields.
  */
 export function PaycheckPreviewScreen(): JSX.Element {
   const [amount, setAmount] = useState('2,000.00');
   const [eventDate, setEventDate] = useState(todayIso());
-  const [givingPercent, setGivingPercent] = useState(DEFAULT_PAYCHECK_PLAN.givingPercent);
+  /*
+   * The saved plan is read once, when the screen first mounts. Reading it on
+   * every render would fight the person typing.
+   */
+  const [savedPlan] = useState(loadEditablePaycheckPlan);
+  const [givingPercent, setGivingPercent] = useState(savedPlan.givingPercent);
   const [emergencyFundPerPaycheck, setEmergencyFundPerPaycheck] = useState(
-    DEFAULT_PAYCHECK_PLAN.emergencyFundPerPaycheck,
+    savedPlan.emergencyFundPerPaycheck,
   );
-  const [leftoverLabel, setLeftoverLabel] = useState(DEFAULT_PAYCHECK_PLAN.leftoverLabel);
+  const [leftoverLabel, setLeftoverLabel] = useState(savedPlan.leftoverLabel);
   const [preview, setPreview] = useState<PaycheckPreview | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
+
+  /*
+   * Settings are saved as they are edited, so there is no Save button and no
+   * moment where a person has to decide to keep their own preferences. Only
+   * these three values are written; a preview is never stored.
+   */
+  useEffect(() => {
+    saveEditablePaycheckPlan({ givingPercent, emergencyFundPerPaycheck, leftoverLabel });
+  }, [givingPercent, emergencyFundPerPaycheck, leftoverLabel]);
 
   function onPreview(submitEvent: FormEvent<HTMLFormElement>): void {
     submitEvent.preventDefault();
@@ -159,7 +180,7 @@ export function PaycheckPreviewScreen(): JSX.Element {
 
         <button type="submit">Preview</button>
 
-        <p className="note">Preview settings reset when you reload the page.</p>
+        <p className="note">Plan settings are saved on this device.</p>
       </form>
 
       {error !== undefined && (

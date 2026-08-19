@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { PaycheckPreviewScreen } from './PaycheckPreviewScreen';
 
@@ -13,6 +13,14 @@ function enterPaycheck(amount: string, eventDate = '2026-01-15'): void {
   fireEvent.change(screen.getByLabelText('Paycheck date'), { target: { value: eventDate } });
   fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
 }
+
+/*
+ * Saved plan settings are real browser storage, so each test starts from a
+ * clean device rather than inheriting whatever the previous one typed.
+ */
+afterEach(() => {
+  localStorage.clear();
+});
 
 /** Edits one plan field without pressing Preview. */
 function editPlan(label: string, value: string): void {
@@ -135,12 +143,13 @@ describe('the paycheck preview screen', () => {
     expect(screen.getByText(/Nothing is saved and no money moves/)).toBeInTheDocument();
   });
 
-  it('says plainly that the settings do not survive a reload', () => {
+  it('says plainly where the plan settings are kept', () => {
     render(<PaycheckPreviewScreen />);
 
+    expect(screen.getByText('Plan settings are saved on this device.')).toBeInTheDocument();
     expect(
-      screen.getByText('Preview settings reset when you reload the page.'),
-    ).toBeInTheDocument();
+      screen.queryByText('Preview settings reset when you reload the page.'),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -240,5 +249,72 @@ describe('editing the plan', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       'Name the destination that receives what is left.',
     );
+  });
+});
+
+describe('remembering the plan', () => {
+  /** Throws the screen away and builds a new one, as a reload would. */
+  function reload(): void {
+    cleanup();
+    render(<PaycheckPreviewScreen />);
+  }
+
+  it('brings the edited plan back on a fresh visit', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Giving', '12');
+    editPlan('Emergency Fund', '600');
+    editPlan('Everything left over goes to', 'Everyday spending');
+
+    reload();
+
+    expect(screen.getByLabelText('Giving')).toHaveValue('12');
+    expect(screen.getByLabelText('Emergency Fund')).toHaveValue('600');
+    expect(screen.getByLabelText('Everything left over goes to')).toHaveValue('Everyday spending');
+  });
+
+  /*
+   * The restored values are authored rules again on the next preview, not a
+   * remembered answer: nothing about the previous result was stored.
+   */
+  it('previews the remembered plan through the whole domain path', () => {
+    render(<PaycheckPreviewScreen />);
+
+    editPlan('Giving', '12');
+    editPlan('Emergency Fund', '600');
+    editPlan('Everything left over goes to', 'Everyday spending');
+
+    reload();
+    enterPaycheck('2000');
+
+    expect(renderedRows()).toEqual([
+      ['Giving', '$240.00'],
+      ['Emergency Fund', '$600.00'],
+      ['Everyday spending', '$1,160.00'],
+      ['Total allocated', '$2,000.00'],
+      ['Unallocated', '$0.00'],
+    ]);
+  });
+
+  it('returns to the starting plan once the device forgets it', () => {
+    render(<PaycheckPreviewScreen />);
+    editPlan('Giving', '12');
+
+    localStorage.clear();
+    reload();
+
+    expect(screen.getByLabelText('Giving')).toHaveValue('10');
+    expect(screen.getByLabelText('Emergency Fund')).toHaveValue('500.00');
+    expect(screen.getByLabelText('Everything left over goes to')).toHaveValue('Spending');
+  });
+
+  it('remembers nothing about the paycheck or its preview', () => {
+    render(<PaycheckPreviewScreen />);
+    enterPaycheck('1234');
+
+    reload();
+
+    expect(screen.getByLabelText('Paycheck amount')).toHaveValue('2,000.00');
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
   });
 });
