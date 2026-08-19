@@ -147,6 +147,260 @@ describe('reading a stored Plan Snapshot', () => {
   });
 });
 
+describe('a stored plan whose outer members look right', () => {
+  /**
+   * Damages one member deep inside the resolved rule set, leaving everything a
+   * shallow reader would look at intact: the envelope, both schema versions and
+   * every top-level member of the plan itself.
+   */
+  function withDamagedPlan(damage: (plan: Record<string, unknown>) => void): unknown {
+    const record = planSnapshotRecord();
+    const plan = structuredClone(record.resolvedRuleSet) as unknown as Record<string, unknown>;
+
+    damage(plan);
+
+    return { ...record, resolvedRuleSet: plan };
+  }
+
+  /** One of the plan's resolved collections, as plain records. */
+  function entriesOf(plan: Record<string, unknown>, member: string): Record<string, unknown>[] {
+    return plan[member] as Record<string, unknown>[];
+  }
+
+  /*
+   * The adversarial case Decision 098 holding 8 exists for: a snapshot that
+   * passes every surface check while carrying a funding amount that is not
+   * money. It must not read back as a valid record.
+   */
+  it('refuses a funding rule whose amount is not money', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const funding = entriesOf(plan, 'requiredFundingRules')[0]?.['funding'] as Record<
+        string,
+        unknown
+      >;
+      funding['amount'] = '500.00';
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a funding amount that lost its currency', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const funding = entriesOf(plan, 'requiredFundingRules')[0]?.['funding'] as Record<
+        string,
+        unknown
+      >;
+      funding['amount'] = { cents: 50_000 };
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a funding amount in fractional cents', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const funding = entriesOf(plan, 'requiredFundingRules')[0]?.['funding'] as Record<
+        string,
+        unknown
+      >;
+      funding['amount'] = { cents: 50_000.5, currency: 'USD' };
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a funding type that names no arm of the contract', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const funding = entriesOf(plan, 'requiredFundingRules')[0]?.['funding'] as Record<
+        string,
+        unknown
+      >;
+      funding['type'] = 'INVENTED_FUNDING';
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  /* A rate outside 0 to 10,000 basis points is not a rate (PFOS-ENG-00 §11). */
+  it('refuses an obligation rate outside the basis-point range', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const obligation = entriesOf(plan, 'globalObligations')[0];
+      if (obligation !== undefined) {
+        obligation['rateBasisPoints'] = 20_000;
+      }
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses an obligation rate that is not a number', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const obligation = entriesOf(plan, 'globalObligations')[0];
+      if (obligation !== undefined) {
+        obligation['rateBasisPoints'] = '10%';
+      }
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a top priority whose rank is not a number', () => {
+    const damaged = withDamagedPlan((plan) => {
+      const priorities = plan['topPriorities'] as Record<string, unknown>;
+      const entry = (priorities['entries'] as Record<string, unknown>[])[0];
+      if (entry !== undefined) {
+        entry['rank'] = 'first';
+      }
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a leftover policy naming a strategy the contract does not have', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['leftoverPolicy'] = { policyType: 'SEND_IT_ALL_SOMEWHERE' };
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a leftover destination that lost its bucket', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['leftoverPolicy'] = { policyType: 'SINGLE_DESTINATION' };
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  /* Decision 094: a product-default rollover arm carries no rule version. */
+  it('refuses a product-default rollover policy carrying an authored version', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['rolloverPolicies'] = [
+        {
+          bucketId: 'bucket-emergency-fund',
+          provenance: { kind: 'PRODUCT_DEFAULT', ruleVersionId: 'rule-version-1' },
+          policy: { policyType: 'CARRY_ALL' },
+        },
+      ];
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('reads an authored rollover policy that is well formed', () => {
+    const intact = withDamagedPlan((plan) => {
+      plan['rolloverPolicies'] = [
+        {
+          bucketId: 'bucket-emergency-fund',
+          provenance: { kind: 'AUTHORED', ruleVersionId: 'rule-version-1' },
+          policy: { policyType: 'CARRY_TO_CAP', capAmount: { cents: 100_000, currency: 'USD' } },
+        },
+      ];
+    });
+
+    expect(parsedSnapshot(intact).resolvedRuleSet.rolloverPolicies).toHaveLength(1);
+  });
+
+  it('refuses a rollover cap that is not money', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['rolloverPolicies'] = [
+        {
+          bucketId: 'bucket-emergency-fund',
+          provenance: { kind: 'AUTHORED', ruleVersionId: 'rule-version-1' },
+          policy: { policyType: 'CARRY_TO_CAP', capAmount: 1_000 },
+        },
+      ];
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a stage the Rule Engine does not name', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['stageSequence'] = ['GLOBAL_OBLIGATION', 'IMPROVISED_STAGE'];
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses a resolution mode the contract does not have', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['resolutionMode'] = 'GUESSED';
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  it('refuses an evaluation date that is not a calendar date', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['evaluationDate'] = '2026-01-15';
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  /*
+   * Decision 077 defers narrowing the persisted warning field so a snapshot can
+   * preserve a code that was later retired. A stored warning this build no
+   * longer issues must still read, or the snapshot would lose the history it
+   * exists to keep.
+   */
+  it('reads a warning whose code this build no longer issues', () => {
+    const historical = withDamagedPlan((plan) => {
+      plan['warnings'] = [
+        { code: 'RULE_WARNING_RETIRED_IN_A_LATER_BUILD', message: 'Kept.', affectedEntityIds: [] },
+      ];
+    });
+
+    expect(parsedSnapshot(historical).resolvedRuleSet.warnings).toHaveLength(1);
+  });
+
+  it('refuses a warning that carries no message', () => {
+    const damaged = withDamagedPlan((plan) => {
+      plan['warnings'] = [{ code: 'RULE_WARNING_SOMETHING', affectedEntityIds: [] }];
+    });
+
+    expect(snapshotFailure(damaged)).toBe(
+      APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+    );
+  });
+
+  /* The checks above would pass vacuously against a plan with nothing in it. */
+  it('reads the plan the resolver actually produced', () => {
+    const plan = parsedSnapshot(planSnapshotRecord()).resolvedRuleSet;
+
+    expect(plan.requiredFundingRules.length).toBeGreaterThan(0);
+    expect(plan.globalObligations.length).toBeGreaterThan(0);
+  });
+});
+
 describe('reading a stored allocation', () => {
   it('reads a valid record', () => {
     expect(parsedAllocation(allocationRecord()).id).toBe('allocation-1');

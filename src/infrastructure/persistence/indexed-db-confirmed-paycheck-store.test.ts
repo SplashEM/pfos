@@ -303,6 +303,103 @@ describe('a stored record this build cannot read', () => {
   });
 });
 
+describe('a stored plan damaged below the surface', () => {
+  /*
+   * Decision 098 holding 8, at the point it actually matters: the record is in
+   * the database, its envelope and both schema versions look right, and one
+   * funding amount deep inside is not money. The read must fail, and the bytes
+   * must still be there afterwards.
+   */
+  it('fails the read and leaves the record untouched', async () => {
+    const snapshot = planSnapshotRecord();
+    const plan = structuredClone(snapshot.resolvedRuleSet) as unknown as Record<string, unknown>;
+    const rules = plan['requiredFundingRules'] as Record<string, unknown>[];
+    const funding = rules[0]?.['funding'] as Record<string, unknown>;
+    funding['amount'] = '500.00';
+
+    const damaged = { ...snapshot, resolvedRuleSet: plan };
+    await writeRaw('plan-snapshots', damaged);
+    await writeRaw('allocations', allocationRecord());
+
+    const result = await store.readConfirmation('allocation-1');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe(
+        APPLICATION_ERROR_CODES.APPLICATION_CONFIRMED_RECORD_MALFORMED,
+      );
+    }
+
+    expect(await readRaw('plan-snapshots', 'plan-snapshot-1')).toEqual(damaged);
+  });
+
+  it('refuses to write a snapshot whose plan is damaged below the surface', async () => {
+    const snapshot = planSnapshotRecord();
+    const plan = structuredClone(snapshot.resolvedRuleSet) as unknown as Record<string, unknown>;
+    plan['leftoverPolicy'] = { policyType: 'SEND_IT_ALL_SOMEWHERE' };
+
+    const result = await store.saveConfirmation({
+      snapshot: { ...snapshot, resolvedRuleSet: plan as never },
+      allocation: allocationRecord(),
+    });
+
+    expect(result.ok).toBe(false);
+
+    const nothing = await store.readPlanSnapshot('plan-snapshot-1');
+    expect(nothing.ok && nothing.value).toBeUndefined();
+  });
+});
+
+describe('money inside the stored plan', () => {
+  /*
+   * Decision 098 holding 7 asks for integer minor units and an explicit
+   * currency. The embedded resolved rule set satisfies that structurally: its
+   * `Money` is `{ cents, currency }`, which is exactly that, so the snapshot
+   * needs no second spelling and none is created.
+   *
+   * What this pins is that the value survives storage as plain data: integer
+   * cents, a currency beside it, no class instance and no floating point.
+   */
+  it('comes back as integer cents with an explicit currency', async () => {
+    await saveOrThrow();
+
+    const stored = (await readOrThrow())?.snapshot.resolvedRuleSet;
+    const amount = stored?.requiredFundingRules[0]?.funding;
+
+    if (amount?.type !== 'FIXED_PER_PAYCHECK') {
+      throw new Error('Expected the fixture plan to carry a fixed per-paycheck requirement.');
+    }
+
+    expect(Number.isSafeInteger(amount.amount.cents)).toBe(true);
+    expect(amount.amount.cents).toBe(50_000);
+    expect(amount.amount.currency).toBe('USD');
+  });
+
+  it('comes back as plain data rather than a class instance', async () => {
+    await saveOrThrow();
+
+    const stored = (await readOrThrow())?.snapshot.resolvedRuleSet;
+    const funding = stored?.requiredFundingRules[0]?.funding;
+
+    if (funding?.type !== 'FIXED_PER_PAYCHECK') {
+      throw new Error('Expected the fixture plan to carry a fixed per-paycheck requirement.');
+    }
+
+    expect(Object.getPrototypeOf(funding.amount)).toBe(Object.prototype);
+    expect(Object.keys(funding.amount).sort()).toEqual(['cents', 'currency']);
+  });
+
+  it('keeps a rate as an exact integer of basis points', async () => {
+    await saveOrThrow();
+
+    const rate = (await readOrThrow())?.snapshot.resolvedRuleSet.globalObligations[0]
+      ?.rateBasisPoints;
+
+    expect(Number.isInteger(rate)).toBe(true);
+    expect(rate).toBe(1_000);
+  });
+});
+
 describe('historical fidelity', () => {
   /*
    * The property the whole record exists for, proved at the persistence layer:

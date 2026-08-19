@@ -18,6 +18,7 @@ import {
   type PersistedTimestamp,
   type PlanSnapshotRecord,
 } from './confirmed-paycheck-records';
+import { isStoredResolvedRuleSet } from './stored-resolved-rule-set';
 
 /**
  * Reading stored confirmed records back as records (Decision 098 holding 8).
@@ -36,21 +37,14 @@ import {
  * The same parsers run on the way in. A value that could not be read back is
  * never written, so the store cannot acquire a record it would later refuse.
  *
- * How deep the check goes differs by record, deliberately:
- *
- *   The allocation envelope is checked exhaustively, member by member, down to
- *   each component and each explanation fact. Every figure a person will ever
- *   be shown for a confirmed paycheck comes from here.
- *
- *   The embedded resolved rule set is checked for identity and structure: that
- *   it declares the schema version this build reads, and that the members
- *   Decision 074 fixes are present with the right kinds. Its nested policy arms
- *   are not re-validated. That contract is versioned in its own right, is
- *   written by PFOS from a typed value, and is stored for provenance rather
- *   than re-executed — Decision 098 holding 4 forbids re-resolving a confirmed
- *   allocation, so nothing reads those arms to produce a number. Validating
- *   them would mean maintaining a second declaration of a contract that already
- *   has one.
+ * Both records are checked all the way down. The allocation envelope is read
+ * member by member, down to each component and each explanation fact, because
+ * every figure a person will be shown for a confirmed paycheck comes from
+ * there. The embedded resolved rule set is read the same way, arm by arm, in
+ * `stored-resolved-rule-set.ts`: a snapshot whose outer members look right
+ * while a funding rule carries a string where an amount belongs is not a valid
+ * record of its declared version, and holding 8 makes that a failure rather
+ * than something to accept and hope nothing reads.
  */
 
 /** Reads a stored value as a Plan Snapshot record. */
@@ -223,12 +217,17 @@ function parseComponents(
 }
 
 /**
- * Checks the embedded resolved rule set for identity and structure.
+ * Reads the embedded resolved rule set.
  *
  * The version is checked first and exactly. A resolved set stored under a
  * version this build does not read is refused rather than interpreted, because
  * no compatibility reader exists (Decisions 092 and 095 left both directions
  * undefined) and guessing would produce a historical answer nobody confirmed.
+ *
+ * Then every arm is checked, in `stored-resolved-rule-set.ts`. A snapshot whose
+ * outer members look right but whose funding rule carries a string where an
+ * amount belongs is not a valid record of its declared version, and Decision
+ * 098 holding 8 requires it to fail rather than be accepted.
  */
 function asResolvedRuleSet(value: unknown): Result<ResolvedRuleSet, DomainError<string>> {
   const record = asRecord(value);
@@ -241,47 +240,11 @@ function asResolvedRuleSet(value: unknown): Result<ResolvedRuleSet, DomainError<
     return unsupportedVersion('resolved rule set', version, RESOLVED_RULE_SET_SCHEMA_VERSION);
   }
 
-  const identifiers = ['resolvedRuleSetId', 'planVersionId', 'roundingPolicyId', 'allocationBasis'];
-  for (const member of identifiers) {
-    if (asNonEmptyString(record[member]) === undefined) {
-      return malformed(`A stored resolved rule set was missing ${member}.`);
-    }
+  if (!isStoredResolvedRuleSet(record)) {
+    return malformed('A stored resolved rule set did not read as the contract it declares.');
   }
 
-  const collections = [
-    'sourceRuleVersionIds',
-    'stageSequence',
-    'globalObligations',
-    'requiredFundingRules',
-    'rolloverPolicies',
-    'goalPolicies',
-    'skippedRules',
-    'warnings',
-    'explanations',
-  ];
-  for (const member of collections) {
-    if (!Array.isArray(record[member])) {
-      return malformed(`A stored resolved rule set was missing ${member}.`);
-    }
-  }
-
-  const structures = ['topPriorities', 'lowerPriorityPool', 'leftoverPolicy', 'evaluationDate'];
-  for (const member of structures) {
-    if (asRecord(record[member]) === undefined) {
-      return malformed(`A stored resolved rule set was missing ${member}.`);
-    }
-  }
-
-  if (asTimestamp(record['resolvedAt']) === undefined) {
-    return malformed('A stored resolved rule set was missing resolvedAt.');
-  }
-
-  /*
-   * Structurally checked rather than reconstructed. The nested policy arms keep
-   * the shape Decisions 094 and 095 fixed, and this layer does not maintain a
-   * second declaration of a contract the domain already declares.
-   */
-  return ok(record as unknown as ResolvedRuleSet);
+  return ok(record);
 }
 
 /** The stored explanation facts, or `undefined` if they cannot be read. */
