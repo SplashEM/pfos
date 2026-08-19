@@ -99,31 +99,6 @@ export interface AuthoredPaycheckPlan {
   readonly labels: Readonly<Record<EntityId, string>>;
 }
 
-/**
- * The name to show for each destination in a plan, as it stands now.
- *
- * Display names only. PFOS-ENG-01 §26 keeps resolution independent of display
- * names, so nothing financial is decided here and a blank or duplicated name is
- * not this function's problem.
- *
- * Unlike `buildAuthoredPaycheckPlan` this cannot fail. A screen showing a
- * previously confirmed paycheck still needs names while the plan being edited
- * is half-typed, and a missing name is answered by the caller falling back to
- * the identifier.
- */
-export function planLabels(plan: EditablePaycheckPlan): Readonly<Record<string, string>> {
-  const labels: Record<string, string> = {
-    [GIVING_BUCKET]: 'Giving',
-    [LEFTOVER_BUCKET]: plan.leftoverLabel,
-  };
-
-  for (const priority of plan.priorities) {
-    labels[priority.id] = priority.label;
-  }
-
-  return labels;
-}
-
 /** Bucket identities that are not a priority, and so are not editable. */
 export const GIVING_BUCKET = asEntityId('bucket-giving');
 export const LEFTOVER_BUCKET = asEntityId('bucket-leftover');

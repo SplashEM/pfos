@@ -10,7 +10,6 @@ import { confirmPaycheck } from '@application/paycheck/confirm-paycheck';
 import { toConfirmedPaycheckView } from '@application/paycheck/confirmed-paycheck-view';
 import {
   DEFAULT_PAYCHECK_PLAN,
-  planLabels,
   type EditablePaycheckPlan,
   type EditablePriority,
 } from '@application/paycheck/paycheck-plan';
@@ -247,7 +246,7 @@ describe('a confirmed paycheck after the plan changes', () => {
     });
     preview(changed);
 
-    const view = toConfirmedPaycheckView(await readBack(), planLabels(changed.plan));
+    const view = toConfirmedPaycheckView(await readBack());
 
     expect(view.lines.map((line) => line.amount)).toEqual([
       '$200.00',
@@ -263,7 +262,7 @@ describe('a confirmed paycheck after the plan changes', () => {
   it('still reads the reasons it was confirmed with', async () => {
     await confirm();
 
-    const view = toConfirmedPaycheckView(await readBack(), planLabels(TWO_PRIORITY_PLAN));
+    const view = toConfirmedPaycheckView(await readBack());
 
     expect(view.lines.map((line) => line.explanation)).toEqual([
       '10% of this paycheck.',
@@ -276,14 +275,14 @@ describe('a confirmed paycheck after the plan changes', () => {
   it('still reads the date the paycheck was allocated against', async () => {
     await confirm();
 
-    expect(toConfirmedPaycheckView(await readBack(), {}).paycheckDate).toBe('2026-01-15');
+    expect(toConfirmedPaycheckView(await readBack()).paycheckDate).toBe('2026-01-15');
   });
 
-  /* A destination with no current name reads as its identifier rather than blank. */
-  it('falls back to the bucket identifier when a name is gone', async () => {
+  /* Destinations read as the identifier the record stores, always. */
+  it('names each destination by the identifier the record stores', async () => {
     await confirm();
 
-    const view = toConfirmedPaycheckView(await readBack(), {});
+    const view = toConfirmedPaycheckView(await readBack());
 
     expect(view.lines.map((line) => line.label)).toEqual([
       'bucket-giving',
@@ -291,6 +290,139 @@ describe('a confirmed paycheck after the plan changes', () => {
       'bucket-laptop',
       'bucket-leftover',
     ]);
+  });
+});
+
+describe('renaming a destination after confirming', () => {
+  /** The plan with the second priority renamed, as a person would rename it. */
+  const RENAMED_PLAN: EditablePaycheckPlan = {
+    ...TWO_PRIORITY_PLAN,
+    priorities: [
+      priority('bucket-emergency-fund', 'Emergency Fund', '500', 1),
+      priority('bucket-laptop', 'Vacation', '300', 2),
+    ],
+  };
+
+  /*
+   * The case this must never get wrong: a paycheck confirmed against Laptop
+   * must not start reading as Vacation because the plan being edited now says
+   * so. Names are not in the record, so the record's own identifier is shown.
+   */
+  it('does not put the new name inside the paycheck already confirmed', async () => {
+    await confirm();
+
+    /* The plan is renamed and previewed again, as a person would. */
+    preview(request({ plan: RENAMED_PLAN }));
+
+    const view = toConfirmedPaycheckView(await readBack());
+
+    expect(view.lines.map((line) => line.label)).not.toContain('Vacation');
+    expect(view.lines.map((line) => line.label)).toEqual([
+      'bucket-giving',
+      'bucket-emergency-fund',
+      'bucket-laptop',
+      'bucket-leftover',
+    ]);
+  });
+
+  /* And the record itself is untouched: the rename wrote nothing. */
+  it('leaves the stored record exactly as it was', async () => {
+    await confirm();
+    const before = await readBack();
+
+    preview(request({ plan: RENAMED_PLAN }));
+
+    expect(await readBack()).toEqual(before);
+  });
+
+  it('leaves the confirmed amounts and reasons as they were', async () => {
+    await confirm();
+
+    preview(request({ plan: RENAMED_PLAN, amount: '5000' }));
+
+    const view = toConfirmedPaycheckView(await readBack());
+
+    expect(view.lines.map((line) => line.amount)).toEqual([
+      '$200.00',
+      '$500.00',
+      '$300.00',
+      '$1,000.00',
+    ]);
+    expect(view.lines[2]?.explanation).toBe('Priority 2 · Requested $300.00 · Funded in full.');
+  });
+});
+
+describe('what is confirmed is what was previewed', () => {
+  /*
+   * Nothing is resolved or allocated a second time at confirmation. The record
+   * is built from the proposal the preview carried, so every stored line must
+   * match that proposal value for value rather than merely happening to agree
+   * with a fresh calculation.
+   */
+  it('stores the allocation the preview carried', async () => {
+    const proposal = preview().confirmable;
+
+    await confirmPaycheck({
+      proposal,
+      confirmedAt: CONFIRMED_AT,
+      timeZone: 'America/Los_Angeles',
+      ids,
+      store,
+    });
+
+    const stored = await readBack();
+
+    expect(stored.allocation.components.map((line) => line.amountCents)).toEqual(
+      proposal.allocation.lines.map((line) => line.amount.cents),
+    );
+    expect(stored.allocation.components.map((line) => line.destinationBucketId)).toEqual(
+      proposal.allocation.lines.map((line) => line.bucketId),
+    );
+    expect(stored.allocation.totalInputCents).toBe(proposal.incomeEvent.netAmount.cents);
+  });
+
+  it('stores the plan the preview resolved, not one resolved again', async () => {
+    const proposal = preview().confirmable;
+
+    await confirmPaycheck({
+      proposal,
+      confirmedAt: CONFIRMED_AT,
+      timeZone: 'America/Los_Angeles',
+      ids,
+      store,
+    });
+
+    expect((await readBack()).snapshot.resolvedRuleSet).toEqual(proposal.resolvedRuleSet);
+  });
+
+  /*
+   * A proposal previewed under one plan keeps its own answer even if a
+   * different plan is previewed before it is confirmed. The application layer
+   * holds the proposal; nothing consults the current plan on the way to
+   * storage.
+   */
+  it('confirms the proposal it was handed, whatever was previewed since', async () => {
+    const proposal = preview().confirmable;
+
+    preview(
+      request({
+        plan: { ...TWO_PRIORITY_PLAN, givingPercent: '40' },
+        amount: '9000',
+      }),
+    );
+
+    await confirmPaycheck({
+      proposal,
+      confirmedAt: CONFIRMED_AT,
+      timeZone: 'America/Los_Angeles',
+      ids,
+      store,
+    });
+
+    const stored = await readBack();
+
+    expect(stored.allocation.totalInputCents).toBe(200_000);
+    expect(stored.allocation.components[0]?.amountCents).toBe(20_000);
   });
 });
 

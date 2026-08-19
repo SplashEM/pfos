@@ -13,7 +13,7 @@ import {
 } from '@application/paycheck/edit-paycheck-plan';
 import { confirmPaycheck } from '@application/paycheck/confirm-paycheck';
 import { toConfirmedPaycheckView } from '@application/paycheck/confirmed-paycheck-view';
-import { planLabels, type EditablePaycheckPlan } from '@application/paycheck/paycheck-plan';
+import type { EditablePaycheckPlan } from '@application/paycheck/paycheck-plan';
 import type { ConfirmedPaycheckRecords } from '@application/persistence/confirmed-paycheck-records';
 import {
   previewPaycheckAllocation,
@@ -89,17 +89,16 @@ export function PaycheckPreviewScreen({
   const [previewedFrom, setPreviewedFrom] = useState<string | undefined>(undefined);
   const [confirming, setConfirming] = useState(false);
   /*
-   * The stored records, not a formatted view of them. Destination names come
-   * from the plan as it stands now, so a renamed bucket reads under its new
-   * name; the amounts and reasons beside it are the confirmed ones and are
-   * never recalculated (Decision 098 holding 4).
+   * The stored records. Everything shown for a confirmed paycheck is read from
+   * them and from nothing else — not the plan being edited above — so renaming
+   * a priority cannot change what a saved paycheck says (Decision 098
+   * holding 4).
    */
   const [confirmed, setConfirmed] = useState<ConfirmedPaycheckRecords | undefined>(undefined);
   const [justConfirmed, setJustConfirmed] = useState(false);
 
   const priorities = orderedPriorities(plan);
-  const confirmation =
-    confirmed === undefined ? undefined : toConfirmedPaycheckView(confirmed, planLabels(plan));
+  const confirmation = confirmed === undefined ? undefined : toConfirmedPaycheckView(confirmed);
   const currentInputs = JSON.stringify({ plan, amount, eventDate });
   const confirmable = preview !== undefined && previewedFrom === currentInputs;
 

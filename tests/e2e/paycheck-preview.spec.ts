@@ -268,18 +268,19 @@ test('a person can confirm a paycheck and still see it after changing the plan',
   const saved = page.getByRole('region', { name: 'Latest confirmed paycheck' });
   const savedRows = saved.getByRole('row');
 
-  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
-  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
-  await expect(savedRows.filter({ hasText: 'Spending' })).toContainText('$1,000.00');
+  /* A saved paycheck names destinations by the identifier its record stores. */
+  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'bucket-leftover' })).toContainText('$1,000.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
   await expect(savedRows.filter({ hasText: 'Unallocated' })).toContainText('$0.00');
 
   /* The confirmed paycheck survives a real reload. */
   await page.reload();
 
-  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
 
   /* The plan changes completely. */
   await page.getByLabel('Giving').fill('20');
@@ -295,18 +296,65 @@ test('a person can confirm a paycheck and still see it after changing the plan',
   await expect(previewRows.filter({ hasText: 'Giving' })).toContainText('$600.00');
 
   /* The confirmed paycheck is unchanged by any of it. */
-  await expect(savedRows.filter({ hasText: 'Giving' })).toContainText('$200.00');
-  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText('$500.00');
-  await expect(savedRows.filter({ hasText: 'Laptop' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'bucket-giving' })).toContainText('$200.00');
+  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText('$500.00');
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
   await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
 
   /* Its reasons are the ones it was confirmed with. */
-  await expect(savedRows.filter({ hasText: 'Emergency Fund' })).toContainText(
+  await expect(savedRows.filter({ hasText: 'bucket-emergency-fund' })).toContainText(
     'Priority 1 · Requested $500.00 · Funded in full.',
   );
 
   /* And nothing anywhere claims money moved. */
   await expect(page.getByText('PFOS does not move money').first()).toBeVisible();
+});
+
+/*
+ * The rename case, in a real browser: a paycheck confirmed against one priority
+ * must not start claiming it went somewhere else because that priority was
+ * renamed afterwards. The saved section reads from the stored record alone.
+ */
+test('renaming a priority does not rewrite a paycheck already confirmed', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('button', { name: 'Add priority' }).click();
+  await page.getByLabel('Priority 2 name').fill('Laptop');
+  await page.getByLabel('Priority 2 amount').fill('300');
+
+  await page.getByLabel('Paycheck amount').fill('2000');
+  await page.getByLabel('Paycheck date').fill('2026-01-15');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  await expect(
+    page.getByRole('region', { name: 'Preview' }).getByRole('row').filter({ hasText: 'Laptop' }),
+  ).toContainText('$300.00');
+
+  await page.getByRole('button', { name: 'Confirm paycheck' }).click();
+  await expect(page.getByText('Paycheck confirmed and saved on this device.')).toBeVisible();
+
+  const saved = page.getByRole('region', { name: 'Latest confirmed paycheck' });
+  const savedRows = saved.getByRole('row');
+
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+
+  /* The priority is renamed, and the plan is previewed again under the new name. */
+  await page.getByLabel('Priority 2 name').fill('Vacation');
+  await page.getByRole('button', { name: 'Preview' }).click();
+
+  await expect(
+    page.getByRole('region', { name: 'Preview' }).getByRole('row').filter({ hasText: 'Vacation' }),
+  ).toContainText('$300.00');
+
+  /* The confirmed paycheck says nothing about Vacation, before or after a reload. */
+  await expect(saved).not.toContainText('Vacation');
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+
+  await page.reload();
+
+  await expect(saved).not.toContainText('Vacation');
+  await expect(savedRows.filter({ hasText: 'bucket-priority-2' })).toContainText('$300.00');
+  await expect(savedRows.filter({ hasText: 'Total allocated' })).toContainText('$2,000.00');
 });
 
 test('an unusable amount is explained rather than previewed', async ({ page }) => {

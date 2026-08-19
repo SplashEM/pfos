@@ -58,16 +58,6 @@ const PLAN_SNAPSHOT_STORE = 'plan-snapshots';
 const ALLOCATION_STORE = 'allocations';
 
 /**
- * Orders confirmations by when they were confirmed, then by identifier.
- *
- * The identifier is part of the key so the order is total: two confirmations
- * recorded in the same millisecond still have one answer to which is later, and
- * that answer does not depend on how the database returns rows (PFOS-ENG-02
- * §68; PFOS-ENG-00 §32 Invariant 11).
- */
-const CONFIRMED_AT_INDEX = 'by-confirmed-at';
-
-/**
  * Builds the IndexedDB implementation of the confirmed-paycheck port.
  *
  * A factory rather than a class: it holds no state, and it exists to name the
@@ -219,30 +209,45 @@ async function readConfirmation(
 /**
  * Reads the most recently confirmed paycheck.
  *
- * The cursor walks the confirmation index backwards and stops at the first
- * entry, so the newest record is found without loading the others. A database
- * that has never stored a confirmation answers `undefined`, which is not a
- * failure.
+ * Every stored allocation is read and the newest is chosen here, in explicit
+ * code, rather than by an index.
+ *
+ * That is deliberate. The database was published at version 1 with two plain
+ * object stores and nothing else, and a device that already has one will never
+ * run the upgrade path again. An index added under the same version number
+ * would exist on a database created today and be missing from one created last
+ * week, and the read would fail on exactly the devices that already hold a
+ * person's history. Adding it properly means a version 2 and the migration
+ * architecture Decision 098 deliberately left undecided, which one screen's
+ * ordering does not justify.
+ *
+ * The order is total and explicit: the confirmation moment first, the record
+ * identifier second. Two confirmations recorded in the same millisecond still
+ * have one answer to which is newer, and no answer here depends on the order
+ * IndexedDB happened to return rows in (PFOS-ENG-02 §68; PFOS-ENG-00 §32
+ * Invariant 11).
+ *
+ * Reading every record is right for one paycheck and would be wrong for a
+ * thousand. When there are enough of them for that to matter, the fix is a
+ * schema version and a migration, not a quiet index.
  */
 async function readLatestConfirmation(
   databaseName: string,
 ): Promise<Result<ConfirmedPaycheckRecords | undefined, DomainError>> {
-  let latestId: string | undefined;
+  let stored: readonly unknown[];
 
   try {
     const database = await openDatabase(databaseName);
 
     try {
-      latestId = await new Promise<string | undefined>((resolve, reject) => {
+      stored = await new Promise<readonly unknown[]>((resolve, reject) => {
         const request = database
           .transaction([ALLOCATION_STORE], 'readonly')
           .objectStore(ALLOCATION_STORE)
-          .index(CONFIRMED_AT_INDEX)
-          .openCursor(null, 'prev');
+          .getAll();
 
         request.onsuccess = () => {
-          const cursor = request.result;
-          resolve(cursor === null ? undefined : String(cursor.primaryKey));
+          resolve(request.result);
         };
         request.onerror = () => {
           reject(request.error ?? new Error('The read failed.'));
@@ -262,7 +267,33 @@ async function readLatestConfirmation(
     );
   }
 
-  return latestId === undefined ? ok(undefined) : readConfirmation(databaseName, latestId);
+  let latest: AllocationRecord | undefined;
+
+  for (const value of stored) {
+    /*
+     * Every record is read before any of them is compared. A stored record this
+     * build cannot read is a failure rather than something to skip past: the
+     * one being skipped might be the newest, and answering with an older one
+     * would show a person a paycheck that is not their latest.
+     */
+    const allocation = parseAllocationRecord(value);
+    if (!allocation.ok) {
+      return allocation;
+    }
+
+    if (latest === undefined || isNewer(allocation.value, latest)) {
+      latest = allocation.value;
+    }
+  }
+
+  return latest === undefined ? ok(undefined) : readConfirmation(databaseName, latest.id);
+}
+
+/** Later by confirmation moment, and by identifier when two share a moment. */
+function isNewer(candidate: AllocationRecord, incumbent: AllocationRecord): boolean {
+  const moment = candidate.confirmedAt.epochMilliseconds - incumbent.confirmedAt.epochMilliseconds;
+
+  return moment === 0 ? candidate.id > incumbent.id : moment > 0;
 }
 
 /** Reads one Plan Snapshot. */
@@ -333,6 +364,11 @@ async function readStored(
  * exists, §26's migration rules govern it and this function is not the place to
  * improvise them.
  *
+ * This shape is published. Nothing may be added to it — not a store, not an
+ * index — while the version stays 1, because a device that already opened
+ * version 1 will never run this again and would be left without whatever was
+ * added. Anything new needs a version and a migration.
+ *
  * Both stores key on the record's own opaque identifier (§14), so no key is
  * derived from a date, a name or an amount.
  */
@@ -347,8 +383,7 @@ function openDatabase(databaseName: string): Promise<IDBDatabase> {
         database.createObjectStore(PLAN_SNAPSHOT_STORE, { keyPath: 'id' });
       }
       if (!database.objectStoreNames.contains(ALLOCATION_STORE)) {
-        const allocations = database.createObjectStore(ALLOCATION_STORE, { keyPath: 'id' });
-        allocations.createIndex(CONFIRMED_AT_INDEX, ['confirmedAt.epochMilliseconds', 'id']);
+        database.createObjectStore(ALLOCATION_STORE, { keyPath: 'id' });
       }
     };
 

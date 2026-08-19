@@ -760,15 +760,20 @@ describe('confirming a paycheck', () => {
     expect(confirmedPaychecks.saved()).toBe(1);
   });
 
+  /*
+   * A saved paycheck names its destinations by the identifier the record
+   * stores. A confirmed record holds no display name, and taking one from the
+   * plan being edited above would let a rename rewrite history.
+   */
   it('shows the saved paycheck after confirming', async () => {
     renderScreen();
     enterPaycheck('2000');
     await confirmPaycheckOnScreen();
 
     expect(rowsUnder('Latest confirmed paycheck')).toEqual([
-      ['Giving', '$200.00'],
-      ['Emergency Fund', '$500.00'],
-      ['Spending', '$1,300.00'],
+      ['bucket-giving', '$200.00'],
+      ['bucket-emergency-fund', '$500.00'],
+      ['bucket-leftover', '$1,300.00'],
     ]);
   });
 
@@ -831,11 +836,30 @@ describe('confirming a paycheck', () => {
     press('Move up', 1);
 
     expect(rowsUnder('Latest confirmed paycheck')).toEqual([
-      ['Giving', '$200.00'],
-      ['Emergency Fund', '$500.00'],
-      ['Camera', '$300.00'],
-      ['Spending', '$1,000.00'],
+      ['bucket-giving', '$200.00'],
+      ['bucket-emergency-fund', '$500.00'],
+      ['bucket-priority-2', '$300.00'],
+      ['bucket-leftover', '$1,000.00'],
     ]);
+  });
+
+  /*
+   * The rename case on its own, because it is the one that would go wrong
+   * quietly: the priority a person confirmed as Laptop is renamed, and the
+   * saved paycheck must not start claiming it went to Vacation.
+   */
+  it('does not rename a destination inside a paycheck already confirmed', async () => {
+    renderScreen();
+    twoPriorityPlan();
+    enterPaycheck('2000');
+    await confirmPaycheckOnScreen();
+
+    editPlan('Priority 2 name', 'Vacation');
+
+    const saved = screen.getByRole('region', { name: 'Latest confirmed paycheck' });
+
+    expect(within(saved).queryByText('Vacation')).not.toBeInTheDocument();
+    expect(rowsUnder('Latest confirmed paycheck')).toContainEqual(['bucket-priority-2', '$300.00']);
   });
 
   /* The stored record survives the screen being thrown away and rebuilt. */
@@ -850,9 +874,9 @@ describe('confirming a paycheck', () => {
     await screen.findByRole('region', { name: 'Latest confirmed paycheck' });
 
     expect(rowsUnder('Latest confirmed paycheck')).toEqual([
-      ['Giving', '$200.00'],
-      ['Emergency Fund', '$500.00'],
-      ['Spending', '$1,300.00'],
+      ['bucket-giving', '$200.00'],
+      ['bucket-emergency-fund', '$500.00'],
+      ['bucket-leftover', '$1,300.00'],
     ]);
   });
 

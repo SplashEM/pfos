@@ -10,13 +10,21 @@ import { explanationText, usd } from './allocation-explanation-text';
  * against current rules, so this reads the record and formats it and does
  * nothing else.
  *
- * Destination names are the exception, and they are not financial. A confirmed
- * record stores bucket identifiers rather than display names — PFOS-ENG-01 §26
- * keeps resolution independent of display names, and neither Decision 098 nor
- * PFOS-ENG-02 §69 puts a label in the record — so a name is looked up in the
- * current plan and falls back to the identifier when the bucket is no longer
- * there. A renamed bucket therefore reads under its new name beside its
- * original amount, which is how a rename behaves everywhere else.
+ * Destinations read as the identifier the record stores, and deliberately not
+ * as a name from the plan being edited now.
+ *
+ * A confirmed record holds `destinationBucketId` and no display name: neither
+ * Decision 098 nor PFOS-ENG-02 §69 puts a label in the record, and PFOS-ENG-01
+ * §26 keeps resolution independent of display names. Reading the name from the
+ * current plan would mean a paycheck a person confirmed against "Laptop"
+ * silently reads as "Vacation" once they rename that priority — the record
+ * unchanged, the screen saying something else. A stored paycheck may not appear
+ * to have had destinations it did not have.
+ *
+ * So the identifier is shown. It is plain, it comes only from the record, and
+ * it cannot drift. Showing the human name a person saw at confirmation would
+ * mean persisting that name, which is a change to the confirmed-record contract
+ * and belongs to a decision rather than to this function.
  */
 export interface ConfirmedPaycheckLineView {
   readonly bucketId: string;
@@ -36,11 +44,8 @@ export interface ConfirmedPaycheckView {
   readonly unallocated: string;
 }
 
-/** Formats one stored confirmation for the screen. */
-export function toConfirmedPaycheckView(
-  records: ConfirmedPaycheckRecords,
-  labels: Readonly<Record<string, string>>,
-): ConfirmedPaycheckView {
+/** Formats one stored confirmation for the screen, from the record alone. */
+export function toConfirmedPaycheckView(records: ConfirmedPaycheckRecords): ConfirmedPaycheckView {
   const { allocation, snapshot } = records;
 
   /*
@@ -57,7 +62,7 @@ export function toConfirmedPaycheckView(
     confirmedAt: readableMoment(allocation.confirmedAt),
     lines: ordered.map((component) => ({
       bucketId: component.destinationBucketId,
-      label: labels[component.destinationBucketId] ?? component.destinationBucketId,
+      label: component.destinationBucketId,
       amount: usd(component.amountCents),
       explanation: explanationText(component.explanation, component.amountCents),
     })),
